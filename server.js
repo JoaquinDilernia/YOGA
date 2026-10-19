@@ -144,8 +144,12 @@ async function buildTurnos(store) {
     for (const item of o.products || []) {
       const baseName = item.name_without_variants || item.name;
       const time = (item.variant_values || []).join(' · ');
-      const existing = slots.get(`${item.product_id}-${item.variant_id}`);
-      const slot = existing || getSlot(item.product_id, item.variant_id, { ...parseProductName(baseName, o.created_at), time });
+      let slot = slots.get(`${item.product_id}-${item.variant_id}`);
+      if (!slot) {
+        const parsed = parseProductName(baseName, o.created_at);
+        if (!parsed.date) continue; // gift cards, etc.: no son turnos
+        slot = getSlot(item.product_id, item.variant_id, { ...parsed, time });
+      }
       slot.attendees.push({
         orderId: o.id,
         number: o.number,
