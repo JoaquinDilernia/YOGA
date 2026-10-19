@@ -117,7 +117,7 @@ const startMinutes =(time = '') => {
 async function buildTurnos(store) {
   const [products, orders] = await Promise.all([
     tnGetAll(store, 'products', 'id,name,published,created_at,variants'),
-    tnGetAll(store, 'orders', 'id,number,status,payment_status,created_at,contact_name,contact_email,contact_phone,customer,products,note'),
+    tnGetAll(store, 'orders', 'id,number,status,payment_status,created_at,contact_name,contact_email,contact_phone,customer,products,note,total,currency'),
   ]);
 
   const slots = new Map();
@@ -157,6 +157,9 @@ async function buildTurnos(store) {
         email: o.contact_email || o.customer?.email || '',
         phone: o.contact_phone || o.customer?.phone || '',
         qty: Number(item.quantity) || 1,
+        // Orden de un solo ítem: total real (con cupones/descuentos); si no, precio × cantidad del ítem
+        amount: o.products.length === 1 ? Number(o.total) : Number(item.price) * (Number(item.quantity) || 1),
+        currency: o.currency || 'ARS',
         paymentStatus: o.payment_status,
         createdAt: o.created_at,
         note: o.note || '',

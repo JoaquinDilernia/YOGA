@@ -103,6 +103,8 @@ th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; t
 td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 tr:last-child td { border-bottom: none; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
+.paid-cell { white-space: nowrap; }
+.paid-cell strong { display: block; font-weight: 600; margin-bottom: 4px; }
 tr.inactive td { color: var(--muted); }
 tr.inactive td strong { text-decoration: line-through; }
 .note {font-size: 12px; color: var(--muted); margin-top: 4px; font-style: italic; }

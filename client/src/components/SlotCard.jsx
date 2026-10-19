@@ -1,4 +1,4 @@
-import { PAYMENT_LABELS, waLink } from '../utils.js';
+import { PAYMENT_LABELS, formatMoney, waLink } from '../utils.js';
 
 // No suman al conteo de anotados
 const INACTIVE = ['voided', 'refunded', 'abandoned'];
@@ -38,8 +38,8 @@ export default function SlotCard({ slot }) {
                 <th>Nombre</th>
                 <th>Mail</th>
                 <th>Teléfono</th>
-                <th className="num">Cant.</th>
-                <th>Pago</th>
+                <th className="num">Personas</th>
+                <th className="num">Pagó</th>
               </tr>
             </thead>
             <tbody>
@@ -60,10 +60,11 @@ export default function SlotCard({ slot }) {
                       '—'
                     )}
                   </td>
-                  <td data-label="Cant." className="num">
+                  <td data-label="Personas" className="num">
                     {a.qty}
                   </td>
-                  <td data-label="Pago">
+                  <td data-label="Pagó" className="num paid-cell">
+                    <strong>{formatMoney(a.amount, a.currency)}</strong>
                     <span className={`status ${a.paymentStatus}`}>{PAYMENT_LABELS[a.paymentStatus] || a.paymentStatus}</span>
                   </td>
                 </tr>

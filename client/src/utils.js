@@ -18,7 +18,10 @@ export const PAYMENT_LABELS = {
   voided: 'Anulado',
 };
 
-export const waLink = (phone) => {
+export const formatMoney = (amount, currency = 'ARS') =>
+  new Intl.NumberFormat('es-AR', { style: 'currency', currency, maximumFractionDigits: 0 }).format(amount || 0);
+
+export const waLink =(phone) => {
   const digits = (phone || '').replace(/\D/g, '');
   return digits ? `https://wa.me/${digits}` : null;
 };
@@ -30,10 +33,11 @@ export function matchesQuery(attendee, q) {
 }
 
 export function downloadCSV(slots, filename = 'turnos.csv') {
-  const rows = [['Fecha', 'Horario', 'Lugar', 'Nombre', 'Mail', 'Teléfono', 'Cantidad', 'Pago', 'Orden']];
+  const rows = [['Día', 'Hora', 'Sede', 'Nombre', 'Mail', 'Teléfono', 'Cantidad de personas', 'Cuánto pagó', 'Estado del pago', 'Orden']];
   for (const s of slots) {
     for (const a of s.attendees) {
-      rows.push([s.date || s.title, s.time, s.place, a.name, a.email, a.phone, a.qty, PAYMENT_LABELS[a.paymentStatus] || a.paymentStatus, a.number]);
+      const day = s.date ? s.date.split('-').reverse().join('/') : s.title;
+      rows.push([day, s.time, s.place, a.name, a.email, a.phone, a.qty, a.amount ?? '', PAYMENT_LABELS[a.paymentStatus] || a.paymentStatus, a.number]);
     }
   }
   const csv = rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
