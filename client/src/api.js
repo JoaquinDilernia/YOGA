@@ -26,8 +26,27 @@ export async function login(password) {
   return data;
 }
 
-export async function fetchTurnos(token, fresh = false) {
-  const res = await fetch(`/api/turnos${fresh ? '?fresh=1' : ''}`, {
+export const getLastStore = () => {
+  try {
+    return localStorage.getItem('turnos_store');
+  } catch {
+    return null;
+  }
+};
+
+export const setLastStore = (key) => {
+  try {
+    localStorage.setItem('turnos_store', key);
+  } catch {}
+};
+
+export const fetchMe = (token) => authGet('/api/me', token);
+
+export const fetchTurnos = (token, store, fresh = false) =>
+  authGet(`/api/turnos?store=${encodeURIComponent(store)}${fresh ? '&fresh=1' : ''}`, token);
+
+async function authGet(url, token) {
+  const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json().catch(() => ({}));

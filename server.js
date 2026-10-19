@@ -9,26 +9,27 @@ const SECRET = process.env.SESSION_SECRET || 'cambiar-esto';
 const SESSION_DAYS = 30;
 const CACHE_MS = 60 * 1000;
 
-// Tiendas: STORES='[{"key":"perritos","name":"Yoga y Patitas","id":"123","token":"...","password":"..."}]'
-// o una sola tienda con TN_STORE_ID / TN_TOKEN / PANEL_PASSWORD / STORE_NAME
-function loadStores() {
-  if (process.env.STORES) return JSON.parse(process.env.STORES);
-  return [{
-    key: process.env.STORE_KEY || 'tienda',
-    name: process.env.STORE_NAME || 'Turnos',
-    id: process.env.TN_STORE_ID,
-    token: process.env.TN_TOKEN,
-    password: process.env.PANEL_PASSWORD,
-  }];
-}
-const STORES = loadStores().filter((s) => s.id && s.token && s.password);
-if (!STORES.length) console.warn('[turnos] No hay tiendas configuradas (STORES o TN_STORE_ID/TN_TOKEN/PANEL_PASSWORD)');
+// Tiendas: STORES='[{"key":"perritos","name":"Yoga y Patitas","id":"123","token":"..."}]'
+// Usuarios: USERS='[{"name":"Marcos","password":"...","stores":["perritos","gatitos"]}]'
+const parseEnv = (name) => {
+  try {
+    return JSON.parse(process.env[name] || '[]');
+  } catch {
+    console.error(`[turnos] ${name} no es un JSON válido`);
+    return [];
+  }
+};
+const STORES = parseEnv('STORES').filter((s) => s.key && s.id && s.token);
+const USERS = parseEnv('USERS').filter((u) => u.name && u.password && Array.isArray(u.stores));
+if (!STORES.length || !USERS.length) console.warn('[turnos] Faltan STORES o USERS');
+
+const userStores = (user) => STORES.filter((s) => user.stores.includes(s.key)).map((s) => ({ key: s.key, name: s.name }));
 
 // ---------- Sesión (token firmado, sin base de datos) ----------
 const sign = (payload) => crypto.createHmac('sha256', SECRET).update(payload).digest('base64url');
 
-function createToken(storeKey) {
-  const payload = `${storeKey}.${Date.now() + SESSION_DAYS * 864e5}`;
+function createToken(user) {
+  const payload = `${Buffer.from(user.name).toString('base64url')}.${Date.now() + SESSION_DAYS * 864e5}`;
   return `${payload}.${sign(payload)}`;
 }
 
@@ -39,9 +40,17 @@ function readToken(token = '') {
   const sig = Buffer.from(token.slice(i + 1));
   const expected = Buffer.from(sign(payload));
   if (sig.length !== expected.length || !crypto.timingSafeEqual(sig, expected)) return null;
-  const [storeKey, exp] = payload.split('.');
+  const [name, exp] = payload.split('.');
   if (Number(exp) < Date.now()) return null;
-  return STORES.find((s) => s.key === storeKey) || null;
+  // Se busca el usuario en cada request: si se le sacan tiendas o se lo borra, aplica al instante
+  return USERS.find((u) => u.name === Buffer.from(name, 'base64url').toString()) || null;
+}
+
+function auth(req, res, next) {
+  const user = readToken((req.headers.authorization || '').replace(/^Bearer /, ''));
+  if (!user) return res.status(401).json({ error: 'Sesión vencida' });
+  req.user = user;
+  next();
 }
 
 const safeEqual = (a, b) => {
@@ -176,17 +185,23 @@ app.use(express.json());
 app.post('/api/login', (req, res) => {
   const ip = req.ip;
   if (tooManyAttempts(ip)) return res.status(429).json({ error: 'Demasiados intentos, probá en unos minutos' });
-  const store = STORES.find((s) => safeEqual(s.password, req.body?.password || ''));
-  if (!store) {
+  const user = USERS.find((u) => safeEqual(u.password, req.body?.password || ''));
+  if (!user) {
     attempts.get(ip).push(Date.now());
     return res.status(401).json({ error: 'Contraseña incorrecta' });
   }
-  res.json({ token: createToken(store.key), store: { key: store.key, name: store.name } });
+  res.json({ token: createToken(user), user: { name: user.name } });
 });
 
-app.get('/api/turnos', async (req, res) => {
-  const store = readToken((req.headers.authorization || '').replace(/^Bearer /, ''));
-  if (!store) return res.status(401).json({ error: 'Sesión vencida' });
+app.get('/api/me', auth, (req, res) => {
+  res.json({ user: { name: req.user.name }, stores: userStores(req.user) });
+});
+
+app.get('/api/turnos', auth, async (req, res) => {
+  const allowed = userStores(req.user);
+  const key = req.query.store || allowed[0]?.key;
+  const store = allowed.some((s) => s.key === key) && STORES.find((s) => s.key === key);
+  if (!store) return res.status(403).json({ error: 'No tenés acceso a esa tienda' });
   try {
     res.json(await getTurnos(store, req.query.fresh === '1'));
   } catch (err) {

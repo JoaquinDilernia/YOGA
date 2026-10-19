@@ -65,6 +65,13 @@ button, input { font: inherit; color: inherit; }
 .tabs a.active { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06); }
 .actions { display: flex; gap: 4px; }
 
+.store-switch { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.store-switch button {
+  flex: 1; min-width: 140px; padding: 10px 14px; border: 1px solid var(--line); background: var(--card);
+  border-radius: 12px; cursor: pointer; color: var(--muted); font-weight: 500; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.store-switch button.active { color: var(--ink); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
 .toolbar { display: flex; gap: 8px; margin-bottom: 20px; }
 .toolbar .search { flex: 1; }
 
