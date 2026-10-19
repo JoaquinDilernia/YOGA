@@ -1,0 +1,14 @@
+{
+  "name": "turnos-yoga",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "npm --prefix client install --include=dev && npm --prefix client run build",
+    "start": "node server.js",
+    "dev": "node --watch --env-file=.env server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
