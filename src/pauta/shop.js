@@ -19,6 +19,31 @@ function sum(orders) {
   };
 }
 
+// Días YYYY-MM-DD entre since y until inclusive
+export function dateRange(since, until) {
+  const out = [];
+  for (let t = Date.parse(`${since}T00:00:00Z`); t <= Date.parse(`${until}T00:00:00Z`); t += 86400_000) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+// Ventas pagadas de la tienda en un rango (para el reporte): totales y día por día
+export function salesInRange(raw, since, until) {
+  const byDate = new Map(dateRange(since, until).map((d) => [d, []]));
+  for (const o of raw.orders) {
+    if (o.status === 'cancelled' || o.payment_status !== 'paid') continue;
+    byDate.get(artDate(new Date(o.created_at)))?.push(o);
+  }
+  return {
+    totals: sum([...byDate.values()].flat()),
+    daily: [...byDate].map(([date, orders]) => {
+      const s = sum(orders);
+      return { date, orders: s.orders, tickets: s.tickets, revenue: s.revenue, fromMeta: s.fromMetaOrders };
+    }),
+  };
+}
+
 // Lo que el agente necesita saber de la tienda: qué fechas hay que llenar y cómo vienen las ventas
 export function buildShopContext({ raw, turnos }, now = new Date()) {
   const today = artDate(now);

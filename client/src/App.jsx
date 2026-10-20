@@ -6,6 +6,7 @@ import Login from './components/Login.jsx';
 import ListView from './components/ListView.jsx';
 import CalendarView from './components/CalendarView.jsx';
 import PautaView from './components/pauta/PautaView.jsx';
+import ReportsView from './components/reports/ReportsView.jsx';
 
 export default function App() {
   const [session, setSessionState] = useState(getSession);
@@ -17,7 +18,10 @@ export default function App() {
   const [query, setQuery] = useState('');
   // null hasta saber si el servidor tiene la pauta prendida
   const [pautaEnabled, setPautaEnabled] = useState(null);
-  const onPauta = useLocation().pathname.startsWith('/pauta');
+  const path = useLocation().pathname;
+  const onReports = path.startsWith('/reportes');
+  // Pauta y Reportes no usan la lista de turnos ni su buscador
+  const onPauta = path.startsWith('/pauta') || onReports;
 
   const logout = useCallback(() => {
     setSession(null);
@@ -111,6 +115,7 @@ export default function App() {
           <NavLink to="/lista">Lista</NavLink>
           <NavLink to="/calendario">Calendario</NavLink>
           {pautaEnabled && <NavLink to="/pauta">Pauta</NavLink>}
+          {pautaEnabled && <NavLink to="/reportes">Reportes</NavLink>}
         </nav>
         <div className="actions">
           {!onPauta && (
@@ -158,7 +163,16 @@ export default function App() {
       {!onPauta && !data && loading && <div className="empty">Cargando turnos…</div>}
 
       {onPauta && pautaEnabled === false && <Navigate to="/lista" replace />}
-      {onPauta && pautaEnabled && storeKey && (
+      {onReports && pautaEnabled && storeKey && (
+        <ReportsView
+          key={storeKey}
+          token={session.token}
+          store={storeKey}
+          storeName={currentStore?.name}
+          onError={handleError}
+        />
+      )}
+      {onPauta && !onReports && pautaEnabled && storeKey && (
         <PautaView token={session.token} store={storeKey} onError={handleError} />
       )}
 

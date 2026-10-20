@@ -12,6 +12,7 @@ export function createPauta({ db, stores, canAccess, getStoreData, metaToken, an
     ? metaFactory({ accessToken: metaToken, accountId: settings.meta_ad_account_id })
     : null);
   const getShop = async (key) => buildShopContext(await getStoreData(stores.find((s) => s.key === key)));
+  const getRaw = async (key) => (await getStoreData(stores.find((s) => s.key === key))).raw;
   const startRun = anthropic ? createAgentRunner({ anthropic, repo, metaFor, getShop, stores, model }) : null;
 
   // Corrida diaria de todas las tiendas, una detrás de otra (no se pisan con el rate limit de Meta)
@@ -28,6 +29,6 @@ export function createPauta({ db, stores, canAccess, getStoreData, metaToken, an
     }
   }
 
-  const router = createPautaRouter({ repo, stores, canAccess, metaFor, getShop, startRun, hasMetaToken: Boolean(metaToken) });
+  const router = createPautaRouter({ repo, stores, canAccess, metaFor, getShop, getRaw, startRun, hasMetaToken: Boolean(metaToken) });
   return { repo, router, runDaily, startRun };
 }

@@ -217,3 +217,22 @@ describe('corrida del agente', () => {
     expect(calls.filter((c) => c.op === 'createAdset')).toHaveLength(0);
   });
 });
+
+describe('reporte para el cliente', () => {
+  it('devuelve Meta y tienda en el rango pedido, y valida las fechas', async () => {
+    const { as } = await setup();
+    const sinMeta = (await as('marcos').get('/api/pauta/perritos/report?since=2026-10-01&until=2026-10-07')).body;
+    expect(sinMeta).toMatchObject({ meta: null, configured: { metaAccount: false }, range: { previous: { since: '2026-09-24', until: '2026-09-30' } } });
+    expect(sinMeta.shop.daily).toHaveLength(7);
+
+    await as('marcos').put('/api/pauta/perritos/settings', { meta_ad_account_id: '123' });
+    const conMeta = (await as('marcos').get('/api/pauta/perritos/report?since=2026-10-01&until=2026-10-07')).body;
+    expect(conMeta.meta.daily).toHaveLength(7);
+    expect(conMeta.meta.totals).toMatchObject({ spend: 0, purchases: 0 });
+
+    expect((await as('marcos').get('/api/pauta/perritos/report?since=2026-10-07&until=2026-10-01')).status).toBe(400);
+    expect((await as('marcos').get('/api/pauta/perritos/report?since=hoy&until=2026-10-01')).status).toBe(400);
+    expect((await as('marcos').get('/api/pauta/perritos/report?since=2026-10-01&until=2099-01-01')).status).toBe(400);
+    expect((await as('fran').get('/api/pauta/perritos/report?since=2026-10-01&until=2026-10-07')).status).toBe(403);
+  });
+});

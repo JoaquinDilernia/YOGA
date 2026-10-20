@@ -87,3 +87,19 @@ describe('cliente de Meta', () => {
     expect(normalizeAccountId('')).toBe('');
   });
 });
+
+describe('reporte', () => {
+  it('compara contra el período anterior de la misma duración', async () => {
+    const { previousRange } = await import('../src/pauta/report.js');
+    expect(previousRange('2026-10-14', '2026-10-20')).toEqual({ since: '2026-10-07', until: '2026-10-13' });
+    expect(previousRange('2026-10-01', '2026-10-31')).toEqual({ since: '2026-08-31', until: '2026-09-30' });
+  });
+
+  it('suma las ventas de la tienda día por día, incluidos los días sin ventas', async () => {
+    const { buildShopReport } = await import('../src/pauta/report.js');
+    const r = buildShopReport(raw(), '2026-10-18', '2026-10-20');
+    expect(r.daily.map((d) => [d.date, d.orders, d.fromMeta])).toEqual([['2026-10-18', 0, 0], ['2026-10-19', 1, 1], ['2026-10-20', 1, 0]]);
+    expect(r.totals).toMatchObject({ orders: 2, tickets: 3, revenue: 104700, fromMetaOrders: 1 });
+    expect(r.previousTotals.orders).toBe(0);
+  });
+});

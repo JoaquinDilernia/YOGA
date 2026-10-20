@@ -67,6 +67,8 @@ async function authRequest(method, url, token, body) {
 const pautaUrl = (store, path) => `/api/pauta/${encodeURIComponent(store)}${path}`;
 export const pautaApi = (token, store) => ({
   overview: (refresh = false) => authGet(pautaUrl(store, `/overview${refresh ? '?refresh=1' : ''}`), token),
+  report: (since, until, refresh = false) =>
+    authGet(pautaUrl(store, `/report?since=${since}&until=${until}${refresh ? '&refresh=1' : ''}`), token),
   saveSettings: (patch) => authRequest('PUT', pautaUrl(store, '/settings'), token, patch),
   startRun: () => authRequest('POST', pautaUrl(store, '/runs'), token),
   runs: () => authGet(pautaUrl(store, '/runs'), token),

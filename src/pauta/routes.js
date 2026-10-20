@@ -2,8 +2,11 @@ import express from 'express';
 import { HttpError, badRequest, unavailable } from '../errors.js';
 import { buildSnapshot } from './snapshot.js';
 import { createExecutor } from './agent.js';
+import { buildMetaReport, buildShopReport, previousRange } from './report.js';
+import { artDate } from './metrics.js';
 
 const SNAPSHOT_TTL_MS = 5 * 60_000;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const META_ID = /^\d{1,30}$/;
 const LEVEL_LABEL = { campaign: 'la campaña', adset: 'el conjunto', ad: 'el anuncio' };
@@ -48,7 +51,7 @@ function parseSettings(body = {}) {
 }
 
 // canAccess(user, storeKey): el usuario tiene esa tienda asignada
-export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, startRun, hasMetaToken }) {
+export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, getRaw, startRun, hasMetaToken }) {
   const r = express.Router({ mergeParams: true });
 
   r.use((req, _res, next) => {
@@ -94,6 +97,48 @@ export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, s
     res.json({
       configured: { metaToken: hasMetaToken, metaAccount: Boolean(settings.meta_ad_account_id), agent: Boolean(startRun) },
       settings, lastRun: runs[0] ?? null, pending, questions, requests, snapshot: snap, metaError, shop, shopError,
+    });
+  }));
+
+  // Reporte para el cliente: resultados de Meta y ventas de la tienda en un rango de fechas
+  const reportCache = new Map();
+  r.get('/report', wrap(async (req, res) => {
+    const store = req.store.key;
+    const { since, until } = req.query;
+    const today = artDate();
+    if (!DATE.test(since ?? '') || !DATE.test(until ?? '') || since > until) throw badRequest('Rango de fechas inválido');
+    if (until > today) throw badRequest('La fecha final no puede ser futura');
+    if (Date.parse(until) - Date.parse(since) > 366 * 86400_000) throw badRequest('El rango puede ser de hasta un año');
+
+    const settings = await repo.getSettings(store);
+    const meta = metaFor(settings);
+    const key = `${store}|${since}|${until}|${settings.meta_ad_account_id}`;
+    const hit = reportCache.get(key);
+    let metaReport = null;
+    let metaError = null;
+    if (meta) {
+      if (hit && req.query.refresh !== '1' && Date.now() - hit.at < SNAPSHOT_TTL_MS) {
+        metaReport = hit.data;
+      } else {
+        try {
+          metaReport = await buildMetaReport(meta, since, until);
+          reportCache.set(key, { at: Date.now(), data: metaReport });
+        } catch (err) {
+          metaError = String(err.message || err);
+        }
+      }
+    }
+    let shop = null;
+    let shopError = null;
+    try {
+      shop = buildShopReport(await getRaw(store), since, until);
+    } catch (err) {
+      shopError = String(err.message || err);
+    }
+    res.json({
+      range: { since, until, previous: previousRange(since, until) },
+      configured: { metaToken: hasMetaToken, metaAccount: Boolean(settings.meta_ad_account_id) },
+      meta: metaReport, metaError, shop, shopError,
     });
   }));
 
