@@ -2,12 +2,17 @@ import express from 'express';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import Anthropic from '@anthropic-ai/sdk';
+import cron from 'node-cron';
+import { createStoreData } from './src/tiendanube.js';
+import { connect } from './src/db.js';
+import { createPauta } from './src/pauta/index.js';
+import { pautaErrorHandler } from './src/pauta/routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.SESSION_SECRET || 'cambiar-esto';
 const SESSION_DAYS = 30;
-const CACHE_MS = 60 * 1000;
 
 // Tiendas: STORES='[{"key":"perritos","name":"Yoga y Patitas","id":"123","token":"..."}]'
 // Usuarios: USERS='[{"name":"Marcos","password":"...","stores":["perritos","gatitos"]}]'
@@ -69,119 +74,28 @@ function tooManyAttempts(ip) {
 }
 
 // ---------- Tienda Nube ----------
-async function tnGetAll(store, resource, fields) {
-  const out = [];
-  for (let page = 1; page < 50; page++) {
-    const url = `https://api.tiendanube.com/v1/${store.id}/${resource}?per_page=200&page=${page}&fields=${fields}`;
-    const res = await fetch(url, {
-      headers: { Authentication: `bearer ${store.token}`, 'User-Agent': 'Turnos Panel (jdilernia99@gmail.com)' },
-    });
-    if (res.status === 404 && page > 1) break; // TN responde 404 pasada la última página
-    if (!res.ok) throw new Error(`Tienda Nube ${resource} ${res.status}: ${await res.text()}`);
-    const items = await res.json();
-    out.push(...items);
-    if (items.length < 200) break;
-  }
-  return out;
-}
+const getStoreData = createStoreData();
+const getTurnos = async (store, fresh) => (await getStoreData(store, fresh)).turnos;
 
-const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-const DAYS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
-const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-
-// "Sábado 24 de Octubre • Palermo • Mario Bravo 1029" -> { date: '2026-10-24', title, place }
-function parseProductName(name, refDate) {
-  const [dayPart, ...rest] = name.split('•').map((s) => s.trim());
-  const m = norm(dayPart).match(/(\d{1,2})\s+de\s+([a-z]+)/);
-  const month = m ? MONTHS.indexOf(m[2]) : -1;
-  if (!m || month < 0) return { date: null, title: name, place: '' };
-  const day = Number(m[1]);
-  const weekday = DAYS.findIndex((d) => norm(dayPart).startsWith(d));
-  const ref = new Date(refDate || Date.now());
-  // El nombre no trae año: probamos el año de referencia y el siguiente, priorizando el que coincide con el día de semana
-  const candidates = [ref.getUTCFullYear(), ref.getUTCFullYear() + 1, ref.getUTCFullYear() - 1];
-  let year = candidates.find((y) => weekday >= 0 && new Date(Date.UTC(y, month, day)).getUTCDay() === weekday);
-  if (!year) year = month < ref.getUTCMonth() - 1 ? ref.getUTCFullYear() + 1 : ref.getUTCFullYear();
-  const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  return { date, title: dayPart, place: rest.join(' • ') };
-}
-
-// Pagos que no cuentan como lugar ocupado (se muestran igual, marcados)
-const INACTIVE_PAYMENTS = ['voided', 'refunded', 'abandoned'];
-
-const startMinutes =(time = '') => {
-  const m = time.match(/(\d{1,2}):(\d{2})/);
-  return m ? Number(m[1]) * 60 + Number(m[2]) : 9999;
-};
-
-async function buildTurnos(store) {
-  const [products, orders] = await Promise.all([
-    tnGetAll(store, 'products', 'id,name,published,created_at,variants'),
-    tnGetAll(store, 'orders', 'id,number,status,payment_status,created_at,contact_name,contact_email,contact_phone,customer,products,note,total,currency'),
-  ]);
-
-  const slots = new Map();
-  const getSlot = (productId, variantId, info) => {
-    const key = `${productId}-${variantId}`;
-    if (!slots.has(key)) slots.set(key, { key, productId, variantId, stockLeft: null, published: false, attendees: [], ...info });
-    return slots.get(key);
-  };
-
-  for (const p of products) {
-    const name = p.name?.es || Object.values(p.name || {})[0] || '';
-    const parsed = parseProductName(name, p.created_at);
-    if (!parsed.date) continue; // gift cards, etc.
-    for (const v of p.variants || []) {
-      const time = (v.values || []).map((x) => x.es || Object.values(x)[0]).join(' · ');
-      const slot = getSlot(p.id, v.id, { ...parsed, time });
-      slot.stockLeft = v.stock_management ? v.stock : null;
-      slot.published = p.published;
-    }
-  }
-
-  for (const o of orders) {
-    if (o.status === 'cancelled') continue;
-    for (const item of o.products || []) {
-      const baseName = item.name_without_variants || item.name;
-      const time = (item.variant_values || []).join(' · ');
-      let slot = slots.get(`${item.product_id}-${item.variant_id}`);
-      if (!slot) {
-        const parsed = parseProductName(baseName, o.created_at);
-        if (!parsed.date) continue; // gift cards, etc.: no son turnos
-        slot = getSlot(item.product_id, item.variant_id, { ...parsed, time });
-      }
-      slot.attendees.push({
-        orderId: o.id,
-        number: o.number,
-        name: o.contact_name || o.customer?.name || '',
-        email: o.contact_email || o.customer?.email || '',
-        phone: o.contact_phone || o.customer?.phone || '',
-        qty: Number(item.quantity) || 1,
-        // Orden de un solo ítem: total real (con cupones/descuentos); si no, precio × cantidad del ítem
-        amount: o.products.length === 1 ? Number(o.total) : Number(item.price) * (Number(item.quantity) || 1),
-        currency: o.currency || 'ARS',
-        paymentStatus: o.payment_status,
-        createdAt: o.created_at,
-        note: o.note || '',
-      });
-    }
-  }
-
-  const list = [...slots.values()]
-    .filter((s) => s.attendees.length || s.published)
-    .map((s) => ({ ...s, booked: s.attendees.reduce((n, a) => (INACTIVE_PAYMENTS.includes(a.paymentStatus) ? n : n + a.qty), 0) }))
-    .sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || startMinutes(a.time) - startMinutes(b.time) || a.place.localeCompare(b.place));
-
-  return { store: { key: store.key, name: store.name }, slots: list, updatedAt: new Date().toISOString() };
-}
-
-const cache = new Map();
-async function getTurnos(store, fresh) {
-  const hit = cache.get(store.key);
-  if (!fresh && hit && Date.now() - hit.at < CACHE_MS) return hit.data;
-  const data = await buildTurnos(store);
-  cache.set(store.key, { at: Date.now(), data });
-  return data;
+// ---------- Pauta (opcional: sin DATABASE_URL el panel muestra solo turnos) ----------
+let pauta = null;
+if (process.env.DATABASE_URL) {
+  const db = await connect(process.env.DATABASE_URL);
+  const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
+  pauta = createPauta({
+    db,
+    stores: STORES,
+    canAccess: (user, key) => user.stores.includes(key),
+    getStoreData,
+    metaToken: process.env.META_ACCESS_TOKEN || null,
+    anthropic,
+    model: process.env.PAUTA_MODEL || undefined,
+  });
+  if (!process.env.META_ACCESS_TOKEN) console.warn('[pauta] META_ACCESS_TOKEN no está definida: Pauta sin conexión a Meta');
+  if (!anthropic) console.warn('[pauta] ANTHROPIC_API_KEY no está definida: el agente no corre');
+  cron.schedule('0 9 * * *', () => pauta.runDaily(), { timezone: 'America/Argentina/Buenos_Aires' });
+} else {
+  console.warn('[pauta] DATABASE_URL no está definida: la sección Pauta está apagada');
 }
 
 // ---------- HTTP ----------
@@ -201,7 +115,7 @@ app.post('/api/login', (req, res) => {
 });
 
 app.get('/api/me', auth, (req, res) => {
-  res.json({ user: { name: req.user.name }, stores: userStores(req.user) });
+  res.json({ user: { name: req.user.name }, stores: userStores(req.user), pauta: Boolean(pauta) });
 });
 
 app.get('/api/turnos', auth, async (req, res) => {
@@ -216,6 +130,8 @@ app.get('/api/turnos', auth, async (req, res) => {
     res.status(502).json({ error: 'No se pudo leer Tienda Nube' });
   }
 });
+
+if (pauta) app.use('/api/pauta/:store', auth, pauta.router, pautaErrorHandler);
 
 const dist = path.join(__dirname, 'client', 'dist');
 app.use(express.static(dist));

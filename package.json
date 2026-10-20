@@ -2,13 +2,24 @@
   "name": "turnos-yoga",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "npm --prefix client install --include=dev && npm --prefix client run build",
     "start": "node server.js",
-    "dev": "node --watch --env-file=.env server.js"
+    "dev": "node --watch --env-file=.env server.js",
+    "test": "vitest run"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "@anthropic-ai/sdk": "^0.132.1",
+    "express": "^4.21.2",
+    "node-cron": "^3.0.3",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.2.17",
+    "supertest": "^7.3.1",
+    "vitest": "^2.1.9"
   }
 }

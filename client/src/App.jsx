@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { fetchMe, fetchTurnos, getLastStore, getSession, setLastStore, setSession } from './api.js';
 import { downloadCSV, matchesQuery } from './utils.js';
 import Login from './components/Login.jsx';
 import ListView from './components/ListView.jsx';
 import CalendarView from './components/CalendarView.jsx';
+import PautaView from './components/pauta/PautaView.jsx';
 
 export default function App() {
   const [session, setSessionState] = useState(getSession);
@@ -14,6 +15,9 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
+  // null hasta saber si el servidor tiene la pauta prendida
+  const [pautaEnabled, setPautaEnabled] = useState(null);
+  const onPauta = useLocation().pathname.startsWith('/pauta');
 
   const logout = useCallback(() => {
     setSession(null);
@@ -28,15 +32,16 @@ export default function App() {
       if (err.unauthorized) logout();
       else setError(err.message);
     },
-    [logout]
+    [logout],
   );
 
   // Tiendas a las que tiene acceso el usuario
   useEffect(() => {
     if (!session) return;
     fetchMe(session.token)
-      .then(({ stores }) => {
+      .then(({ stores, pauta }) => {
         setStores(stores);
+        setPautaEnabled(Boolean(pauta));
         const last = getLastStore();
         setStoreKey(stores.some((s) => s.key === last) ? last : stores[0]?.key || null);
         if (!stores.length) setError('Tu usuario no tiene tiendas asignadas');
@@ -57,7 +62,7 @@ export default function App() {
         setLoading(false);
       }
     },
-    [session, storeKey, handleError]
+    [session, storeKey, handleError],
   );
 
   useEffect(() => {
@@ -105,11 +110,19 @@ export default function App() {
         <nav className="tabs">
           <NavLink to="/lista">Lista</NavLink>
           <NavLink to="/calendario">Calendario</NavLink>
+          {pautaEnabled && <NavLink to="/pauta">Pauta</NavLink>}
         </nav>
         <div className="actions">
-          <button className="btn ghost" onClick={() => load(true)} disabled={loading} title="Traer lo último de Tienda Nube">
-            {loading ? 'Actualizando…' : 'Actualizar'}
-          </button>
+          {!onPauta && (
+            <button
+              className="btn ghost"
+              onClick={() => load(true)}
+              disabled={loading}
+              title="Traer lo último de Tienda Nube"
+            >
+              {loading ? 'Actualizando…' : 'Actualizar'}
+            </button>
+          )}
           <button className="btn ghost" onClick={logout}>
             Salir
           </button>
@@ -126,23 +139,30 @@ export default function App() {
         </div>
       )}
 
-      <div className="toolbar">
-        <input
-          className="search"
-          type="search"
-          placeholder="Buscar por nombre, mail, teléfono u orden…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <button className="btn" onClick={() => downloadCSV(slots, `turnos-${storeKey}.csv`)} disabled={!slots.length}>
-          Descargar CSV
-        </button>
-      </div>
+      {!onPauta && (
+        <div className="toolbar">
+          <input
+            className="search"
+            type="search"
+            placeholder="Buscar por nombre, mail, teléfono u orden…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <button className="btn" onClick={() => downloadCSV(slots, `turnos-${storeKey}.csv`)} disabled={!slots.length}>
+            Descargar CSV
+          </button>
+        </div>
+      )}
 
       {error && <div className="alert">{error}</div>}
-      {!data && loading && <div className="empty">Cargando turnos…</div>}
+      {!onPauta && !data && loading && <div className="empty">Cargando turnos…</div>}
 
-      {data && (
+      {onPauta && pautaEnabled === false && <Navigate to="/lista" replace />}
+      {onPauta && pautaEnabled && storeKey && (
+        <PautaView token={session.token} store={storeKey} onError={handleError} />
+      )}
+
+      {!onPauta && data && (
         <main>
           <Routes>
             <Route path="/lista" element={<ListView slots={slots} searching={!!query.trim()} />} />
