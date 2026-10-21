@@ -3,3 +3,4 @@ client/node_modules
 client/dist
 .env
 client/vite.config.js.timestamp-*
+.uploads

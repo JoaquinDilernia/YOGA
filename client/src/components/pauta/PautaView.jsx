@@ -3,6 +3,8 @@ import { pautaApi } from '../../api.js';
 import { formatDate, formatMoney } from '../../utils.js';
 import Report from './Report.jsx';
 import SettingsForm from './SettingsForm.jsx';
+import Creatives from './Creatives.jsx';
+import IgPosts from './IgPosts.jsx';
 
 const POLL_MS = 8000;
 
@@ -13,6 +15,7 @@ const TOOL_LABELS = {
   propose_campaign: 'Campaña nueva',
   propose_adset: 'Conjunto nuevo',
   reuse_ad: 'Copiar anuncio',
+  create_ad: 'Publicar pieza',
   promote_ig_post: 'Promocionar post',
 };
 const STATUS_LABELS = {
@@ -133,8 +136,8 @@ export default function PautaView({ token, store, onError }) {
           <button
             className="btn primary"
             onClick={() => act('run', api.startRun)}
-            disabled={!connected || !configured.agent || running || busy === 'run'}
-            title={!connected ? 'Primero conectá la cuenta de Meta en Ajustes' : ''}
+            disabled={!configured.agent || running || busy === 'run'}
+            title={!connected ? 'Sin Meta conectado, el agente analiza solo la tienda' : ''}
           >
             {running ? 'Analizando…' : 'Analizar ahora'}
           </button>
@@ -156,7 +159,8 @@ export default function PautaView({ token, store, onError }) {
 
       {!configured.metaToken && (
         <div className="notice">
-          Falta el token de Meta en el servidor (META_ACCESS_TOKEN). Mientras tanto podés dejar cargados los ajustes.
+          Meta todavía no está conectado. Mientras tanto el agente analiza la tienda (fechas y ventas), y podés ir
+          cargando piezas y ajustes.
         </div>
       )}
       {configured.metaToken && !configured.metaAccount && (
@@ -245,6 +249,25 @@ export default function PautaView({ token, store, onError }) {
           ))}
         </section>
       )}
+
+      <Creatives
+        token={token}
+        store={store}
+        shop={shop}
+        adsets={snapshot?.adsets ?? []}
+        connected={connected}
+        onError={onError}
+      />
+
+      <IgPosts
+        token={token}
+        store={store}
+        shop={shop}
+        adsets={snapshot?.adsets ?? []}
+        ready={connected && Boolean(settings.meta_ig_user_id)}
+        onError={onError}
+        key={`ig-${store}`}
+      />
 
       {snapshot && (
         <Structure
@@ -383,6 +406,12 @@ function DecisionDetail({ d }) {
       </p>
     );
   if (d.tool === 'pause_ad') return <p className="detail">{i.ad_name || i.ad_id}</p>;
+  if (d.tool === 'create_ad')
+    return (
+      <p className="detail">
+        Pieza {i.creative_name || i.creative_id} → {i.adset_name || i.adset_id}
+      </p>
+    );
   if (d.tool === 'reuse_ad')
     return (
       <p className="detail">

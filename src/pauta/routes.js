@@ -1,7 +1,8 @@
 import express from 'express';
-import { HttpError, badRequest, unavailable } from '../errors.js';
+import { HttpError, badRequest, conflict, unavailable } from '../errors.js';
 import { buildSnapshot } from './snapshot.js';
-import { createExecutor } from './agent.js';
+import { createExecutor, loadIgPosts } from './agent.js';
+import { CTA_TYPES, DEFAULT_CTA } from './creativeSpec.js';
 import { buildMetaReport, buildShopReport, previousRange } from './report.js';
 import { artDate } from './metrics.js';
 
@@ -50,9 +51,50 @@ function parseSettings(body = {}) {
   return out;
 }
 
+const url = (v) => {
+  const s = text(v ?? '', 1000, 'Link');
+  let u;
+  try {
+    u = new URL(s);
+  } catch {
+    throw badRequest('Link: tiene que ser una dirección completa (https://...)');
+  }
+  if (!['https:', 'http:'].includes(u.protocol)) throw badRequest('Link: tiene que empezar con https://');
+  return u.toString();
+};
+const cta = (v) => {
+  if (v === undefined || v === null || v === '') return DEFAULT_CTA;
+  if (!CTA_TYPES.includes(v)) throw badRequest('Botón inválido');
+  return v;
+};
+
+// required=true al crear; al editar solo se validan los campos que vienen
+function parseCreative(body = {}, required) {
+  const out = {};
+  const field = (k, max, label, need) => {
+    if (!(k in body)) {
+      if (required && need) throw badRequest(`Falta ${label.toLowerCase()}`);
+      return;
+    }
+    out[k] = text(body[k], max, label);
+    if (need && !out[k]) throw badRequest(`Falta ${label.toLowerCase()}`);
+  };
+  field('name', 120, 'Nombre', true);
+  field('copy', 2000, 'Texto', true);
+  field('headline', 120, 'Título', false);
+  field('notes', 1000, 'Notas', false);
+  if ('link' in body || required) out.link = url(body.link);
+  if ('cta' in body || required) out.cta = cta(body.cta);
+  return out;
+}
+
 // canAccess(user, storeKey): el usuario tiene esa tienda asignada
-export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, getRaw, startRun, hasMetaToken }) {
+export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, getRaw, startRun, hasMetaToken, media }) {
   const r = express.Router({ mergeParams: true });
+  const creativeOut = async (store, id) => {
+    const c = (await repo.listCreatives(store)).find((x) => x.id === id);
+    return (await media.withUrls([c]))[0];
+  };
 
   r.use((req, _res, next) => {
     const store = stores.find((s) => s.key === req.params.store);
@@ -169,7 +211,7 @@ export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, g
     const { settings, meta } = await metaOf(store);
     const d = await repo.claimPending(store, id, req.user.name, 'executing');
     try {
-      const result = await createExecutor({ meta, repo, store, settings })(d.tool, d.input, { userName: req.user.name });
+      const result = await createExecutor({ meta, repo, store, settings, media })(d.tool, d.input, { userName: req.user.name });
       await repo.setDecisionResult(id, { status: 'executed', result });
     } catch (err) {
       await repo.setDecisionResult(id, { status: 'failed', error: String(err.message || err) });
@@ -218,6 +260,117 @@ export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, g
 
   r.post('/requests/:id/done', wrap(async (req, res) => {
     res.json({ request: await repo.closeRequest(req.store.key, uuid(req.params.id)) });
+  }));
+
+  // ---------- Piezas: el equipo sube foto o video (feed y opcional historia) y la publica como anuncio ----------
+  r.get('/creatives', wrap(async (req, res) => {
+    const all = await repo.listCreatives(req.store.key);
+    const visible = req.query.archived === '1' ? all : all.filter((c) => c.status !== 'archived');
+    res.json({ creatives: await media.withUrls(visible) });
+  }));
+
+  r.post('/creatives', wrap(async (req, res) => {
+    const c = await repo.createCreative(req.store.key, parseCreative(req.body, true), req.user.name);
+    res.status(201).json({ creative: (await media.withUrls([{ ...c, feed: null, story: null }]))[0] });
+  }));
+
+  r.patch('/creatives/:id', wrap(async (req, res) => {
+    const store = req.store.key;
+    const id = uuid(req.params.id);
+    const current = await repo.getCreative(store, id);
+    const patch = parseCreative(req.body, false);
+    if ('status' in (req.body ?? {})) {
+      const status = req.body.status;
+      const ok = (status === 'archived' && ['unused', 'used'].includes(current.status)) || (status === 'unused' && current.status === 'archived' && !current.meta_ad_id);
+      if (!ok) throw badRequest('Cambio de estado inválido');
+      patch.status = status;
+    }
+    const editsContent = Object.keys(patch).some((k) => k !== 'status');
+    if (editsContent && current.status !== 'unused') throw conflict('Esta pieza ya se publicó: no se puede editar.');
+    await repo.updateCreative(store, id, patch);
+    res.json({ creative: await creativeOut(store, id) });
+  }));
+
+  r.delete('/creatives/:id', wrap(async (req, res) => {
+    const keys = await repo.deleteCreative(req.store.key, uuid(req.params.id));
+    await Promise.all(keys.map((k) => media.remove(k)));
+    res.status(204).end();
+  }));
+
+  // El archivo viaja como cuerpo del PUT, en streaming hacia el bucket (sin cargarlo en memoria)
+  r.put('/creatives/:id/media/:slot', wrap(async (req, res) => {
+    const store = req.store.key;
+    const id = uuid(req.params.id);
+    let originalName = '';
+    try {
+      originalName = decodeURIComponent(String(req.headers['x-file-name'] ?? ''));
+    } catch {
+      originalName = '';
+    }
+    await media.upload(store, id, req.params.slot, {
+      stream: req, mime: String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase(),
+      bytes: Number(req.headers['content-length']), originalName,
+    });
+    res.json({ creative: await creativeOut(store, id) });
+  }));
+
+  r.delete('/creatives/:id/media/:slot', wrap(async (req, res) => {
+    const store = req.store.key;
+    const id = uuid(req.params.id);
+    await media.removeSlot(store, id, req.params.slot);
+    res.json({ creative: await creativeOut(store, id) });
+  }));
+
+  // Publicar tarda (un video puede llevar minutos en Meta): se reclama la pieza, se contesta 202 y sigue en segundo plano.
+  // El panel ve status=publishing y consulta de nuevo; si falla, el error queda en publish_error.
+  r.post('/creatives/:id/publish', wrap(async (req, res) => {
+    const store = req.store.key;
+    const id = uuid(req.params.id);
+    const adsetId = String(req.body?.adset_id ?? '');
+    if (!META_ID.test(adsetId)) throw badRequest('Elegí el conjunto donde publicarla');
+    const adsetName = text(req.body?.adset_name ?? '', 200, 'Conjunto');
+    const { settings, meta } = await metaOf(store);
+    const files = await repo.getMedia(id);
+    if (!files.some((f) => f.slot === 'feed')) throw badRequest('La pieza no tiene archivo de feed.');
+    const creative = await repo.claimCreative(store, id);
+    const input = { creative_id: id, creative_name: creative.name, adset_id: adsetId, adset_name: adsetName };
+    const title = `Publicar la pieza ${creative.name} en ${adsetName || adsetId}`;
+    createExecutor({ meta, repo, store, settings, media })('create_ad', input, { claimed: true })
+      .then(
+        (result) => repo.addDecision(store, { tool: 'create_ad', input, status: 'executed', result, decidedBy: req.user.name, title, reason: 'Publicada a mano desde el panel.' }),
+        (err) => repo.addDecision(store, { tool: 'create_ad', input, status: 'failed', error: String(err.message || err), decidedBy: req.user.name, title, reason: 'Publicada a mano desde el panel.' }),
+      )
+      .catch((err) => console.error('[pauta] publicar pieza:', err))
+      .finally(() => invalidate(store));
+    res.status(202).json({ creative: await creativeOut(store, id) });
+  }));
+
+  // ---------- Instagram: promocionar un post o reel ya publicado ----------
+  r.get('/ig-posts', wrap(async (req, res) => {
+    const { settings, meta } = await metaOf(req.store.key);
+    if (!settings.meta_ig_user_id) throw unavailable('Falta cargar la cuenta de Instagram en Ajustes.');
+    res.json({ posts: await loadIgPosts({ meta, repo, store: req.store.key, igUserId: settings.meta_ig_user_id }) });
+  }));
+
+  r.post('/ig-posts/:id/promote', wrap(async (req, res) => {
+    const store = req.store.key;
+    const mediaId = String(req.params.id);
+    if (!META_ID.test(mediaId)) throw badRequest('Id de post inválido');
+    const body = req.body ?? {};
+    const adsetId = String(body.adset_id ?? '');
+    if (!META_ID.test(adsetId)) throw badRequest('Elegí el conjunto donde promocionarlo');
+    const input = {
+      ig_media_id: mediaId, adset_id: adsetId, adset_name: text(body.adset_name ?? '', 200, 'Conjunto'),
+      permalink: text(body.permalink ?? '', 500, 'Link del post'), link: url(body.link), cta: cta(body.cta),
+    };
+    const { settings, meta } = await metaOf(store);
+    const result = await createExecutor({ meta, repo, store, settings, media })('promote_ig_post', input, { userName: req.user.name });
+    await repo.addDecision(store, {
+      tool: 'promote_ig_post', input, status: 'executed', result, decidedBy: req.user.name,
+      title: `Promocionar post de Instagram en ${input.adset_name || adsetId}`, reason: 'Hecho a mano desde el panel.',
+    });
+    invalidate(store);
+    res.json({ result });
   }));
 
   r.get('/learnings', wrap(async (req, res) => res.json({ learnings: await repo.listLearnings(req.store.key) })));

@@ -6,6 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import cron from 'node-cron';
 import { createStoreData } from './src/tiendanube.js';
 import { connect } from './src/db.js';
+import { createLocalStorage, createS3Storage } from './src/storage.js';
 import { createPauta } from './src/pauta/index.js';
 import { pautaErrorHandler } from './src/pauta/routes.js';
 
@@ -79,10 +80,17 @@ const getTurnos = async (store, fresh) => (await getStoreData(store, fresh)).tur
 
 // ---------- Pauta (opcional: sin DATABASE_URL el panel muestra solo turnos) ----------
 let pauta = null;
+let storage = null;
 if (process.env.DATABASE_URL) {
   const db = await connect(process.env.DATABASE_URL);
+  // Piezas: bucket S3 (Railway) si está configurado; si no, carpeta local (solo para desarrollo: se pierde en cada deploy)
+  const { S3_ENDPOINT, S3_BUCKET, S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY } = process.env;
+  storage = S3_ENDPOINT && S3_BUCKET && S3_ACCESS_KEY_ID && S3_SECRET_ACCESS_KEY
+    ? await createS3Storage({ endpoint: S3_ENDPOINT, bucket: S3_BUCKET, region: S3_REGION || 'auto', accessKeyId: S3_ACCESS_KEY_ID, secretAccessKey: S3_SECRET_ACCESS_KEY })
+    : createLocalStorage({ dir: path.join(__dirname, '.uploads'), secret: SECRET });
+  if (storage.driver === 'local') console.warn('[pauta] sin bucket S3: las piezas se guardan en .uploads');
   const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
-  pauta = createPauta({
+  pauta = await createPauta({
     db,
     stores: STORES,
     canAccess: (user, key) => user.stores.includes(key),
@@ -90,6 +98,7 @@ if (process.env.DATABASE_URL) {
     metaToken: process.env.META_ACCESS_TOKEN || null,
     anthropic,
     model: process.env.PAUTA_MODEL || undefined,
+    storage,
   });
   if (!process.env.META_ACCESS_TOKEN) console.warn('[pauta] META_ACCESS_TOKEN no está definida: Pauta sin conexión a Meta');
   if (!anthropic) console.warn('[pauta] ANTHROPIC_API_KEY no está definida: el agente no corre');
@@ -130,6 +139,23 @@ app.get('/api/turnos', auth, async (req, res) => {
     res.status(502).json({ error: 'No se pudo leer Tienda Nube' });
   }
 });
+
+// Archivos de piezas con storage local: el link va firmado porque <img>/<video> no mandan el token
+if (storage?.driver === 'local') {
+  app.get('/api/media', (req, res) => {
+    let stream;
+    try {
+      stream = storage.openSigned(req.query);
+    } catch {
+      stream = null;
+    }
+    if (!stream) return res.status(403).end();
+    const ext = String(req.query.key).split('.').pop();
+    res.type(ext);
+    stream.on('error', () => res.status(404).end());
+    stream.pipe(res);
+  });
+}
 
 if (pauta) app.use('/api/pauta/:store', auth, pauta.router, pautaErrorHandler);
 

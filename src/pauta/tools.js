@@ -84,6 +84,19 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'create_ad',
+    description: 'Proponer publicar una pieza que el equipo subió al panel (lista unusedCreatives) como anuncio nuevo en un conjunto existente. Usa el archivo, el texto, el título, el link y el botón de la pieza tal cual. El anuncio nace ACTIVO dentro del conjunto (si el conjunto está pausado no gasta). Elegí el conjunto según a qué fecha o público apunta la pieza (mirá sus notes).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        creative_id: s('id de la pieza (de unusedCreatives)'), creative_name: s('Nombre de la pieza'),
+        adset_id: s('ID del conjunto destino'), adset_name: s('Nombre del conjunto destino'),
+        ...why,
+      },
+      required: ['creative_id', 'adset_id', ...whyReq],
+    },
+  },
+  {
     name: 'promote_ig_post',
     description: 'Proponer promocionar un post o reel que ya está publicado en el Instagram de la marca (lista igPosts) como anuncio en un conjunto, con botón que lleva a la tienda. Usa el post original: suma sus likes y comentarios, y el texto es el del post. Elegí el link: la página de la fecha que hay que llenar (upcomingClasses[].url) o la tienda (storeUrl). No lo propongas si ya está en promotedIn para ese conjunto.',
     input_schema: {
@@ -136,4 +149,6 @@ export const TOOL_DEFINITIONS = [
 ];
 
 export const READ_ONLY_TOOLS = new Set(['search_interest']);
-export const META_ACTIONS = new Set(['pause_ad', 'set_status', 'propose_budget_change', 'propose_campaign', 'propose_adset', 'reuse_ad', 'promote_ig_post']);
+export const META_ACTIONS = new Set(['pause_ad', 'set_status', 'propose_budget_change', 'propose_campaign', 'propose_adset', 'reuse_ad', 'create_ad', 'promote_ig_post']);
+// Sin cuenta de Meta conectada el agente trabaja solo con la tienda: pide piezas, pregunta y aprende
+export const OFFLINE_TOOL_DEFINITIONS = TOOL_DEFINITIONS.filter((t) => !META_ACTIONS.has(t.name) && !READ_ONLY_TOOLS.has(t.name));

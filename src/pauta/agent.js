@@ -1,7 +1,7 @@
-import { TOOL_DEFINITIONS, READ_ONLY_TOOLS, META_ACTIONS } from './tools.js';
+import { TOOL_DEFINITIONS, OFFLINE_TOOL_DEFINITIONS, READ_ONLY_TOOLS, META_ACTIONS } from './tools.js';
 import { buildSystemPrompt } from './systemPrompt.js';
 import { buildSnapshot } from './snapshot.js';
-import { buildAdName, buildIgPostCreativeSpec } from './creativeSpec.js';
+import { buildAdName, buildIgPostCreativeSpec, buildLinkCreativeSpec } from './creativeSpec.js';
 import { artDate } from './metrics.js';
 import { conflict } from '../errors.js';
 
@@ -20,20 +20,61 @@ export async function loadIgPosts({ meta, repo, store, igUserId }) {
 }
 
 // Ejecuta una acción sobre la cuenta de Meta de una tienda (al aprobarla en el panel, o sola en modo autónomo)
-export function createExecutor({ meta, repo, store, settings }) {
+export function createExecutor({ meta, repo, store, settings, media }) {
   const need = (field, label) => {
     if (!settings[field]) throw new Error(`Falta cargar ${label} en Ajustes de Pauta.`);
     return settings[field];
   };
 
-  async function promoteIgPost({ ig_media_id: mediaId, adset_id: adsetId, adset_name: adsetName, permalink, link }, { userName } = {}) {
+  // La pieza se reclama antes de tocar Meta (puede tardar minutos con video): un segundo "Publicar" recibe 409
+  // claimed: el panel ya la reclamó para contestar enseguida y publicar en segundo plano
+  async function publishCreative({ creative_id: creativeId, adset_id: adsetId, adset_name: adsetName }, { claimed = false } = {}) {
+    const creative = claimed ? await repo.getCreative(store, creativeId) : await repo.claimCreative(store, creativeId);
+    try {
+      return await publishClaimed(creative, adsetId, adsetName);
+    } catch (err) {
+      await repo.releaseCreative(creativeId, String(err.message || err));
+      throw err;
+    }
+  }
+
+  async function publishClaimed(creative, adsetId, adsetName) {
+    const pageId = need('meta_page_id', 'la página de Facebook');
+    const files = await repo.getMedia(creative.id);
+    const feedFile = files.find((f) => f.slot === 'feed');
+    const storyFile = files.find((f) => f.slot === 'story');
+    if (!feedFile) throw new Error(`La pieza "${creative.name}" no tiene imagen ni video de feed.`);
+    // Imagen: se sube el archivo y Meta devuelve un hash. Video: con el bucket Meta lo descarga del link firmado
+    // (el servidor no mueve los MB); con storage local se manda el archivo. Después hay que esperar el procesamiento.
+    const toMeta = async (f) => {
+      if (f.kind !== 'video') return { type: 'image', hash: await meta.uploadImage(await media.read(f)) };
+      const videoName = f.original_name || creative.name;
+      const videoId = media.isRemote
+        ? await meta.uploadVideo({ fileUrl: await media.signedUrl(f), name: videoName })
+        : await meta.uploadVideo({ buffer: await media.read(f), name: videoName });
+      await meta.waitVideoReady(videoId);
+      return { type: 'video', videoId, thumbnailUrl: await meta.videoThumbnail(videoId) };
+    };
+    const [feed, story] = await Promise.all([toMeta(feedFile), storyFile ? toMeta(storyFile) : null]);
+    const name = buildAdName({ adsetName: adsetName || adsetId, creativeName: creative.name, date: artDate() });
+    const spec = buildLinkCreativeSpec({
+      name, pageId, igUserId: settings.meta_ig_user_id || null, message: creative.copy, headline: creative.headline,
+      link: creative.link, cta: creative.cta, feed, story,
+    });
+    const { id: metaCreativeId } = await meta.createCreative(spec);
+    const ad = await meta.createAd({ name, adsetId, creativeId: metaCreativeId, status: 'ACTIVE' });
+    await repo.markCreativeUsed(creative.id, ad.id, adsetId);
+    return { ad_id: ad.id, name };
+  }
+
+  async function promoteIgPost({ ig_media_id: mediaId, adset_id: adsetId, adset_name: adsetName, permalink, link, cta }, { userName } = {}) {
     const pageId = need('meta_page_id', 'la página de Facebook');
     const igUserId = need('meta_ig_user_id', 'la cuenta de Instagram');
     // Se reserva antes de tocar Meta: dos pedidos a la vez del mismo post y conjunto no crean dos anuncios
     const reservation = await repo.reserveIgPromotion(store, { igMediaId: mediaId, permalink, adsetId, adsetName, userName });
     const name = buildAdName({ adsetName: adsetName || adsetId, creativeName: `IG${mediaId.slice(-6)}`, date: artDate() });
     try {
-      const creative = await meta.createCreative(buildIgPostCreativeSpec({ name, pageId, igUserId, mediaId, link }));
+      const creative = await meta.createCreative(buildIgPostCreativeSpec({ name, pageId, igUserId, mediaId, link, cta }));
       const ad = await meta.createAd({ name, adsetId, creativeId: creative.id, status: 'ACTIVE' });
       await repo.completeIgPromotion(reservation.id, ad.id);
       return { ad_id: ad.id, name };
@@ -78,6 +119,8 @@ export function createExecutor({ meta, repo, store, settings }) {
         const ad = await meta.createAd({ name, adsetId: input.adset_id, creativeId: input.creative_id, status: 'ACTIVE' });
         return { ad_id: ad.id, name };
       }
+      case 'create_ad':
+        return publishCreative(input, ctx);
       case 'promote_ig_post':
         return promoteIgPost(input, ctx);
       default:
@@ -91,6 +134,7 @@ export function createDispatcher({ meta, repo, store, execute }) {
   return async function dispatch(name, input, { runId, settings }) {
     const base = { runId, tool: name, input, title: input.title ?? '', reason: input.reason ?? '', expectedImpact: input.expected_impact ?? '' };
     try {
+      if (!meta && (name === 'search_interest' || META_ACTIONS.has(name))) return { error: 'Meta todavía no está conectado: esta herramienta no está disponible.' };
       if (name === 'search_interest') return { results: await meta.searchInterests(input.query) };
       if (name === 'request_creative') {
         await repo.addRequest(store, { concept: input.concept, styleNotes: input.style_notes, reason: input.reason });
@@ -140,9 +184,18 @@ async function igPostsForContext({ meta, repo, store, settings }) {
   }
 }
 
+// Piezas subidas al panel que todavía no se publicaron: el agente puede proponer publicarlas con create_ad
+async function unusedCreativesForContext({ repo, store }) {
+  const creatives = await repo.listCreatives(store, { status: 'unused' });
+  return creatives.map((c) => ({
+    id: c.id, name: c.name, copy: c.copy, headline: c.headline, notes: c.notes, link: c.link, cta: c.cta,
+    feed: c.feed?.kind ?? null, story: c.story?.kind ?? null, ready: Boolean(c.feed), created_at: c.created_at,
+  }));
+}
+
 export async function buildContext({ meta, repo, store, settings, shop }) {
-  const [snapshot, requests, learnings, pending, recent, toEvaluate, openQuestions, answered, igPosts] = await Promise.all([
-    buildSnapshot(meta),
+  const [snapshot, requests, learnings, pending, recent, toEvaluate, openQuestions, answered, igPosts, unusedCreatives] = await Promise.all([
+    meta ? buildSnapshot(meta) : null,
     repo.listRequests(store, { status: 'open' }),
     repo.listLearnings(store, { activeOnly: true }),
     repo.listDecisions(store, { status: 'pending', limit: 30 }),
@@ -150,21 +203,29 @@ export async function buildContext({ meta, repo, store, settings, shop }) {
     repo.executedWithoutOutcome(store, 48),
     repo.listQuestions(store, { status: 'open', limit: 30 }),
     repo.answeredSinceLastRun(store),
-    igPostsForContext({ meta, repo, store, settings }),
+    meta ? igPostsForContext({ meta, repo, store, settings }) : [],
+    unusedCreativesForContext({ repo, store }),
   ]);
+  const settingsSection = {
+    monthly_cap_ars: settings.monthly_cap_ars, target_cpa_ars: settings.target_cpa_ars,
+    autonomous: settings.autonomous, business_notes: settings.business_notes,
+  };
+  const metaSections = snapshot
+    ? {
+      spendThisMonth: snapshot.month.spend,
+      account: { spendToday: snapshot.spendToday, month: snapshot.month, last7d: snapshot.last7d },
+      campaigns: snapshot.campaigns,
+      adsets: snapshot.adsets,
+      ads: snapshot.ads,
+      igPosts,
+    }
+    : { meta: 'NO CONECTADO: todavía no hay acceso a la cuenta de Meta. No hay datos de anuncios ni se pueden proponer acciones sobre Meta.' };
   const sections = {
-    today: snapshot.today,
-    settings: {
-      monthly_cap_ars: settings.monthly_cap_ars, target_cpa_ars: settings.target_cpa_ars,
-      autonomous: settings.autonomous, business_notes: settings.business_notes,
-    },
-    spendThisMonth: snapshot.month.spend,
-    account: { spendToday: snapshot.spendToday, month: snapshot.month, last7d: snapshot.last7d },
+    today: snapshot?.today ?? shop.today,
+    settings: settingsSection,
     shop,
-    campaigns: snapshot.campaigns,
-    adsets: snapshot.adsets,
-    ads: snapshot.ads,
-    igPosts,
+    ...metaSections,
+    unusedCreatives,
     openCreativeRequests: requests.map((r) => ({ concept: r.concept, created_at: r.created_at })),
     activeLearnings: learnings.map((l) => ({ id: l.id, text: l.text, evidence: l.evidence })),
     pendingRecommendations: pending.map((d) => ({ id: d.id, tool: d.tool, title: d.title, created_at: d.created_at })),
@@ -178,10 +239,11 @@ export async function buildContext({ meta, repo, store, settings, shop }) {
 
 // metaFor(settings) devuelve el cliente de la cuenta de esa tienda (o null si falta conectarla)
 // getShop(storeKey) devuelve el contexto de Tienda Nube (fechas, lugares, ventas)
-export function createAgentRunner({ anthropic, repo, metaFor, getShop, stores, model = DEFAULT_MODEL }) {
+// Sin Meta conectado igual corre: analiza la tienda (fechas flojas, ventas) y pide piezas o pregunta
+export function createAgentRunner({ anthropic, repo, metaFor, getShop, stores, media, model = DEFAULT_MODEL }) {
   async function process(store, runRow, settings, meta) {
     try {
-      const dispatch = createDispatcher({ meta, repo, store: store.key, execute: createExecutor({ meta, repo, store: store.key, settings }) });
+      const dispatch = createDispatcher({ meta, repo, store: store.key, execute: createExecutor({ meta, repo, store: store.key, settings, media }) });
       const shop = await getShop(store.key);
       const context = await buildContext({ meta, repo, store: store.key, settings, shop });
       const messages = [{ role: 'user', content: `Análisis ${runRow.kind === 'daily' ? 'diario' : 'pedido desde el panel'} de ${store.name}. Datos actuales:\n\n${context}` }];
@@ -194,8 +256,8 @@ export function createAgentRunner({ anthropic, repo, metaFor, getShop, stores, m
           output_config: { effort: 'high' },
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
-          system: buildSystemPrompt(store.name),
-          tools: TOOL_DEFINITIONS,
+          system: buildSystemPrompt(store.name, { metaConnected: Boolean(meta) }),
+          tools: meta ? TOOL_DEFINITIONS : OFFLINE_TOOL_DEFINITIONS,
           messages,
         });
         const resp = await stream.finalMessage();
@@ -224,15 +286,11 @@ export function createAgentRunner({ anthropic, repo, metaFor, getShop, stores, m
     const store = stores.find((s) => s.key === storeKey);
     const settings = await repo.getSettings(storeKey);
     const meta = metaFor(settings);
-    const skip = !settings.agent_enabled && kind === 'daily' ? 'El agente está apagado en Ajustes.'
-      : !meta ? 'Falta conectar la cuenta de Meta en Ajustes.'
-        : null;
-    if (skip && kind === 'daily') {
+    if (!settings.agent_enabled && kind === 'daily') {
       const r = await repo.startRun(storeKey, kind, userName);
-      const run = await repo.finishRun(r.id, { status: 'skipped', report: skip });
+      const run = await repo.finishRun(r.id, { status: 'skipped', report: 'El agente está apagado en Ajustes.' });
       return { run, done: Promise.resolve(run) };
     }
-    if (skip) throw conflict(skip);
     if (await repo.runningRun(storeKey)) throw conflict('Ya hay un análisis corriendo. Esperá unos minutos.');
     const run = await repo.startRun(storeKey, kind, userName);
     return { run, done: process(store, run, settings, meta) };

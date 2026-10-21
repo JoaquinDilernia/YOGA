@@ -82,3 +82,43 @@ export const pautaApi = (token, store) => ({
   learnings: () => authGet(pautaUrl(store, '/learnings'), token),
   deleteLearning: (id) => authRequest('DELETE', pautaUrl(store, `/learnings/${id}`), token),
 });
+
+// Piezas: el archivo va como cuerpo del PUT; XHR para poder mostrar el progreso de la subida
+function uploadFile(url, token, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.setRequestHeader('Content-Type', file.type);
+    xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
+    xhr.onload = () => {
+      let data = {};
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {}
+      if (xhr.status === 401) {
+        const err = new Error(data.error || 'Sesión vencida');
+        err.unauthorized = true;
+        return reject(err);
+      }
+      if (xhr.status === 413 && !data.error) return reject(new Error('El archivo es demasiado grande.'));
+      if (xhr.status < 200 || xhr.status >= 300) return reject(new Error(data.error || 'No se pudo subir el archivo'));
+      resolve(data);
+    };
+    xhr.onerror = () => reject(new Error('Se cortó la conexión mientras se subía el archivo.'));
+    xhr.send(file);
+  });
+}
+
+export const creativesApi = (token, store) => ({
+  list: () => authGet(pautaUrl(store, '/creatives'), token),
+  create: (body) => authRequest('POST', pautaUrl(store, '/creatives'), token, body),
+  update: (id, patch) => authRequest('PATCH', pautaUrl(store, `/creatives/${id}`), token, patch),
+  remove: (id) => authRequest('DELETE', pautaUrl(store, `/creatives/${id}`), token),
+  upload: (id, slot, file, onProgress) => uploadFile(pautaUrl(store, `/creatives/${id}/media/${slot}`), token, file, onProgress),
+  removeMedia: (id, slot) => authRequest('DELETE', pautaUrl(store, `/creatives/${id}/media/${slot}`), token),
+  publish: (id, adset) => authRequest('POST', pautaUrl(store, `/creatives/${id}/publish`), token, adset),
+  igPosts: () => authGet(pautaUrl(store, '/ig-posts'), token),
+  promote: (id, body) => authRequest('POST', pautaUrl(store, `/ig-posts/${id}/promote`), token, body),
+});

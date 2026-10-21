@@ -100,6 +100,45 @@ const MIGRATIONS = [
     UNIQUE (store_key, ig_media_id, meta_adset_id)
   );
   `,
+  // Piezas subidas al panel (foto o video, feed y opcional historia) para publicar como anuncio
+  `
+  CREATE TABLE pauta_creatives (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_key text NOT NULL,
+    name text NOT NULL,
+    copy text NOT NULL,
+    headline text NOT NULL DEFAULT '',
+    notes text NOT NULL DEFAULT '',
+    link text NOT NULL,
+    cta text NOT NULL DEFAULT 'BUY_TICKETS',
+    status text NOT NULL DEFAULT 'unused' CHECK (status IN ('unused','publishing','used','archived')),
+    meta_ad_id text,
+    meta_adset_id text,
+    created_by text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    used_at timestamptz
+  );
+  CREATE INDEX pauta_creatives_store ON pauta_creatives (store_key, created_at DESC);
+
+  CREATE TABLE pauta_media (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    creative_id uuid NOT NULL REFERENCES pauta_creatives(id) ON DELETE CASCADE,
+    slot text NOT NULL CHECK (slot IN ('feed','story')),
+    kind text NOT NULL CHECK (kind IN ('image','video')),
+    storage_key text NOT NULL UNIQUE,
+    mime text NOT NULL,
+    bytes bigint NOT NULL,
+    width integer,
+    height integer,
+    original_name text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (creative_id, slot)
+  );
+  `,
+  // Publicar una pieza corre en segundo plano (un video tarda minutos en Meta): si falla, el error queda en la pieza
+  `
+  ALTER TABLE pauta_creatives ADD COLUMN publish_error text;
+  `,
 ];
 
 export async function migrate(db) {

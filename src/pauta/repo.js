@@ -152,5 +152,72 @@ export function createPautaRepo(db) {
     listIgPromotions: (store) => all(
       'SELECT * FROM pauta_ig_promotions WHERE store_key = $1 AND meta_ad_id IS NOT NULL ORDER BY created_at DESC LIMIT 500', [store],
     ),
+
+    // Piezas, cada una con su archivo de feed y (opcional) de historia
+    createCreative: (store, c, userName) => one(
+      `INSERT INTO pauta_creatives (store_key, name, copy, headline, notes, link, cta, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [store, c.name, c.copy, c.headline ?? '', c.notes ?? '', c.link, c.cta, userName ?? null],
+    ),
+    getCreative: (store, id) => one('SELECT * FROM pauta_creatives WHERE store_key = $1 AND id = $2', [store, id], 'No existe esa pieza.'),
+    async updateCreative(store, id, patch) {
+      const cols = Object.keys(patch).filter((c) => ['name', 'copy', 'headline', 'notes', 'link', 'cta', 'status'].includes(c));
+      if (!cols.length) return this.getCreative(store, id);
+      const set = cols.map((c, i) => `${c} = $${i + 3}`).join(', ');
+      return one(`UPDATE pauta_creatives SET ${set} WHERE store_key = $1 AND id = $2 RETURNING *`, [store, id, ...cols.map((c) => patch[c])], 'No existe esa pieza.');
+    },
+    async listCreatives(store, { status } = {}) {
+      const creatives = await all(
+        'SELECT * FROM pauta_creatives WHERE store_key = $1 AND ($2::text IS NULL OR status = $2) ORDER BY created_at DESC LIMIT 200',
+        [store, status ?? null],
+      );
+      if (!creatives.length) return [];
+      const media = await all('SELECT * FROM pauta_media WHERE creative_id = ANY($1)', [creatives.map((c) => c.id)]);
+      return creatives.map((c) => ({
+        ...c,
+        feed: media.find((m) => m.creative_id === c.id && m.slot === 'feed') ?? null,
+        story: media.find((m) => m.creative_id === c.id && m.slot === 'story') ?? null,
+      }));
+    },
+    // Se reclama antes de tocar Meta (con video puede tardar minutos): un segundo "Publicar" recibe 409
+    async claimCreative(store, id) {
+      const row = await one("UPDATE pauta_creatives SET status = 'publishing', publish_error = NULL WHERE store_key = $1 AND id = $2 AND status = 'unused' RETURNING *", [store, id]);
+      if (row) return row;
+      const c = await this.getCreative(store, id);
+      if (c.status === 'used') throw conflict(`La pieza "${c.name}" ya se publicó (anuncio ${c.meta_ad_id}).`);
+      if (c.status === 'publishing') throw conflict(`La pieza "${c.name}" se está publicando. Esperá a que termine.`);
+      throw conflict(`La pieza "${c.name}" está archivada.`);
+    },
+    releaseCreative: (id, error = null) => db.query("UPDATE pauta_creatives SET status = 'unused', publish_error = $2 WHERE id = $1 AND status = 'publishing'", [id, error]),
+    // Al arrancar: una publicación que quedó a medias por un reinicio vuelve a estar disponible
+    releaseStuckCreatives: () => db.query("UPDATE pauta_creatives SET status = 'unused', publish_error = 'Se cortó la publicación (reinicio del servidor). Revisá en Meta que no se haya creado el anuncio antes de publicar de nuevo.' WHERE status = 'publishing'"),
+    async deleteCreative(store, id) {
+      const c = await this.getCreative(store, id);
+      if (c.status === 'publishing' || c.status === 'used') throw conflict('Una pieza publicada no se puede borrar: archivala.');
+      const keys = (await this.getMedia(id)).map((m) => m.storage_key);
+      await db.query('DELETE FROM pauta_creatives WHERE store_key = $1 AND id = $2', [store, id]);
+      return keys;
+    },
+    markCreativeUsed: (id, adId, adsetId) => one(
+      "UPDATE pauta_creatives SET status = 'used', meta_ad_id = $2, meta_adset_id = $3, used_at = now() WHERE id = $1 RETURNING *",
+      [id, adId, adsetId],
+    ),
+    getMedia: (creativeId) => all('SELECT * FROM pauta_media WHERE creative_id = $1', [creativeId]),
+    // Reemplaza el archivo del lugar (feed/historia): devuelve la clave vieja para borrarla del storage
+    async setMedia(creativeId, m) {
+      const old = await one('SELECT storage_key FROM pauta_media WHERE creative_id = $1 AND slot = $2', [creativeId, m.slot]);
+      const row = await one(
+        `INSERT INTO pauta_media (creative_id, slot, kind, storage_key, mime, bytes, width, height, original_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (creative_id, slot) DO UPDATE SET kind = $3, storage_key = $4, mime = $5, bytes = $6, width = $7, height = $8, original_name = $9, created_at = now()
+         RETURNING *`,
+        [creativeId, m.slot, m.kind, m.storageKey, m.mime, m.bytes, m.width ?? null, m.height ?? null, m.originalName ?? ''],
+      );
+      return { row, oldKey: old?.storage_key ?? null };
+    },
+    async removeMedia(creativeId, slot) {
+      const { rows } = await db.query('DELETE FROM pauta_media WHERE creative_id = $1 AND slot = $2 RETURNING storage_key', [creativeId, slot]);
+      return rows[0]?.storage_key ?? null;
+    },
   };
 }
