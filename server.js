@@ -110,6 +110,22 @@ if (process.env.DATABASE_URL) {
 // ---------- HTTP ----------
 const app = express();
 app.set('trust proxy', 1);
+// Front servido aparte (Hostinger): FRONTEND_URL con los orígenes permitidos, separados por coma
+const ORIGINS = (process.env.FRONTEND_URL || '').split(',').map((o) => o.trim().replace(//+$/, '')).filter(Boolean);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ORIGINS.includes(origin)) {
+    res.set({
+      'Access-Control-Allow-Origin': origin,
+      Vary: 'Origin',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-File-Name',
+      'Access-Control-Max-Age': '600',
+    });
+    if (req.method === 'OPTIONS') return res.status(204).end();
+  }
+  next();
+});
 app.use(express.json());
 
 app.post('/api/login', (req, res) => {

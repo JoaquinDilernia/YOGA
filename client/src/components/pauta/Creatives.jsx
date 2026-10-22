@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { creativesApi } from '../../api.js';
+import { apiUrl, creativesApi } from '../../api.js';
 import { formatDate } from '../../utils.js';
 
 const POLL_MS = 5000;
@@ -418,9 +418,9 @@ function MediaSlot({ slot, file, editable, onUpload, onRemove, onError }) {
       <div className={`media-box ${slot}`}>
         {file ? (
           file.kind === 'video' ? (
-            <video src={file.url} controls muted playsInline preload="metadata" />
+            <video src={apiUrl(file.url)} controls muted playsInline preload="metadata" />
           ) : (
-            <img src={file.url} alt="" />
+            <img src={apiUrl(file.url)} alt="" />
           )
         ) : (
           <span className="muted">{slot === 'feed' ? 'Sin archivo' : 'Opcional'}</span>

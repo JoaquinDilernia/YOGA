@@ -1,5 +1,9 @@
 const KEY = 'turnos_session';
 
+// API en otro dominio (front en Hostinger): VITE_API_URL; vacío = mismo origen
+const API = (import.meta.env.VITE_API_URL || '').replace(//+$/, '');
+export const apiUrl = (url) => (typeof url === 'string' && url.startsWith('/api') ? API + url : url);
+
 export function getSession() {
   try {
     return JSON.parse(localStorage.getItem(KEY));
@@ -16,7 +20,7 @@ export function setSession(session) {
 }
 
 export async function login(password) {
-  const res = await fetch('/api/login', {
+  const res = await fetch(apiUrl('/api/login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ password }),
@@ -48,7 +52,7 @@ export const fetchTurnos = (token, store, fresh = false) =>
 const authGet = (url, token) => authRequest('GET', url, token);
 
 async function authRequest(method, url, token, body) {
-  const res = await fetch(url, {
+  const res = await fetch(apiUrl(url), {
     method,
     headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
@@ -87,7 +91,7 @@ export const pautaApi = (token, store) => ({
 function uploadFile(url, token, file, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('PUT', url);
+    xhr.open('PUT', apiUrl(url));
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.setRequestHeader('Content-Type', file.type);
     xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
