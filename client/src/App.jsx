@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { BarChart3, CalendarDays, Download, List, LogOut, Megaphone, RefreshCw } from 'lucide-react';
 import { fetchMe, fetchTurnos, getLastStore, getSession, setLastStore, setSession } from './api.js';
 import { downloadCSV, matchesQuery } from './utils.js';
 import Login from './components/Login.jsx';
@@ -7,6 +8,13 @@ import ListView from './components/ListView.jsx';
 import CalendarView from './components/CalendarView.jsx';
 import PautaView from './components/pauta/PautaView.jsx';
 import ReportsView from './components/reports/ReportsView.jsx';
+
+const NAV = [
+  { to: '/lista', label: 'Lista', icon: List },
+  { to: '/calendario', label: 'Calendario', icon: CalendarDays },
+  { to: '/pauta', label: 'Pauta', icon: Megaphone, pauta: true },
+  { to: '/reportes', label: 'Reportes', icon: BarChart3, pauta: true },
+];
 
 export default function App() {
   const [session, setSessionState] = useState(getSession);
@@ -100,92 +108,139 @@ export default function App() {
   }
 
   const currentStore = stores.find((s) => s.key === storeKey);
+  const nav = NAV.filter((n) => !n.pauta || pautaEnabled);
+  const section = NAV.find((n) => path.startsWith(n.to))?.label ?? 'Turnos';
+  const userName = session.user?.name || '';
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">🧘</span>
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="side-brand">
+          <span className="brand-mark" aria-hidden>🧘</span>
           <div>
-            <strong>{currentStore?.name || 'Turnos'}</strong>
-            <small>Hola, {session.user?.name}</small>
+            <strong>Yoga</strong>
+            <small>Panel de gestión</small>
           </div>
         </div>
-        <nav className="tabs">
-          <NavLink to="/lista">Lista</NavLink>
-          <NavLink to="/calendario">Calendario</NavLink>
-          {pautaEnabled && <NavLink to="/pauta">Pauta</NavLink>}
-          {pautaEnabled && <NavLink to="/reportes">Reportes</NavLink>}
-        </nav>
-        <div className="actions">
-          {!onPauta && (
-            <button
-              className="btn ghost"
-              onClick={() => load(true)}
-              disabled={loading}
-              title="Traer lo último de Tienda Nube"
-            >
-              {loading ? 'Actualizando…' : 'Actualizar'}
-            </button>
-          )}
-          <button className="btn ghost" onClick={logout}>
-            Salir
-          </button>
-        </div>
-      </header>
-
-      {stores.length > 1 && (
-        <div className="store-switch">
-          {stores.map((s) => (
-            <button key={s.key} className={s.key === storeKey ? 'active' : ''} onClick={() => switchStore(s.key)}>
-              {s.name}
-            </button>
+        {stores.length > 1 && (
+          <>
+            <span className="side-label">Tienda</span>
+            <div className="side-stores">
+              {stores.map((s) => (
+                <button key={s.key} className={s.key === storeKey ? 'active' : ''} onClick={() => switchStore(s.key)}>
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        <span className="side-label">Secciones</span>
+        <nav className="side-nav" aria-label="Secciones">
+          {nav.map(({ to, label, icon: Icon }) => (
+            <NavLink key={to} to={to}>
+              <Icon size={20} aria-hidden />
+              <span>{label}</span>
+            </NavLink>
           ))}
-        </div>
-      )}
-
-      {!onPauta && (
-        <div className="toolbar">
-          <input
-            className="search"
-            type="search"
-            placeholder="Buscar por nombre, mail, teléfono u orden…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <button className="btn" onClick={() => downloadCSV(slots, `turnos-${storeKey}.csv`)} disabled={!slots.length}>
-            Descargar CSV
+        </nav>
+        <div className="me">
+          <span className="avatar" aria-hidden>{userName[0]?.toUpperCase()}</span>
+          <span className="me-name">{userName}</span>
+          <button type="button" className="btn ghost icon" onClick={logout} aria-label="Salir" title="Salir">
+            <LogOut size={18} />
           </button>
         </div>
-      )}
+      </aside>
 
-      {error && <div className="alert">{error}</div>}
-      {!onPauta && !data && loading && <div className="empty">Cargando turnos…</div>}
+      <div className="main">
+        <header className="page-header">
+          <div className="titles">
+            <h1>{section}</h1>
+            <p className="subtitle">{currentStore?.name || 'Cargando…'}</p>
+          </div>
+          <div className="actions">
+            {!onPauta && (
+              <button
+                className="btn ghost icon"
+                onClick={() => load(true)}
+                disabled={loading}
+                aria-label="Actualizar"
+                title="Traer lo último de Tienda Nube"
+              >
+                <RefreshCw size={18} className={loading ? 'spin' : ''} />
+              </button>
+            )}
+            <button type="button" className="btn ghost icon mobile-only" onClick={logout} aria-label="Salir" title="Salir">
+              <LogOut size={18} />
+            </button>
+          </div>
+        </header>
 
-      {onPauta && pautaEnabled === false && <Navigate to="/lista" replace />}
-      {onReports && pautaEnabled && storeKey && (
-        <ReportsView
-          key={storeKey}
-          token={session.token}
-          store={storeKey}
-          storeName={currentStore?.name}
-          onError={handleError}
-        />
-      )}
-      {onPauta && !onReports && pautaEnabled && storeKey && (
-        <PautaView token={session.token} store={storeKey} onError={handleError} />
-      )}
+        <div className="content">
+          {stores.length > 1 && (
+            <div className="store-switch mobile-only">
+              {stores.map((s) => (
+                <button key={s.key} className={s.key === storeKey ? 'active' : ''} onClick={() => switchStore(s.key)}>
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          )}
 
-      {!onPauta && data && (
-        <main>
-          <Routes>
-            <Route path="/lista" element={<ListView slots={slots} searching={!!query.trim()} />} />
-            <Route path="/calendario" element={<CalendarView key={storeKey} slots={slots} />} />
-            <Route path="*" element={<Navigate to="/lista" replace />} />
-          </Routes>
-          <p className="updated">Actualizado {new Date(data.updatedAt).toLocaleString('es-AR')}</p>
-        </main>
-      )}
+          {!onPauta && (
+            <div className="toolbar">
+              <input
+                className="search"
+                type="search"
+                placeholder="Buscar por nombre, mail, teléfono u orden…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              <button className="btn" onClick={() => downloadCSV(slots, `turnos-${storeKey}.csv`)} disabled={!slots.length}>
+                <Download size={16} aria-hidden /> Descargar CSV
+              </button>
+            </div>
+          )}
+
+          {error && <div className="alert">{error}</div>}
+          {!onPauta && !data && loading && <div className="empty">Cargando turnos…</div>}
+
+          {path === '/' && <Navigate to="/lista" replace />}
+          {onPauta && pautaEnabled === false && <Navigate to="/lista" replace />}
+          {onReports && pautaEnabled && storeKey && (
+            <ReportsView
+              key={storeKey}
+              token={session.token}
+              store={storeKey}
+              storeName={currentStore?.name}
+              onError={handleError}
+            />
+          )}
+          {onPauta && !onReports && pautaEnabled && storeKey && (
+            <PautaView token={session.token} store={storeKey} onError={handleError} />
+          )}
+
+          {!onPauta && data && (
+            <main>
+              <Routes>
+                <Route path="/lista" element={<ListView slots={slots} searching={!!query.trim()} />} />
+                <Route path="/calendario" element={<CalendarView key={storeKey} slots={slots} />} />
+                <Route path="*" element={<Navigate to="/lista" replace />} />
+              </Routes>
+              <p className="updated">Actualizado {new Date(data.updatedAt).toLocaleString('es-AR')}</p>
+            </main>
+          )}
+        </div>
+      </div>
+
+      <nav className="bottom mobile-only" aria-label="Secciones">
+        {nav.map(({ to, label, icon: Icon }) => (
+          <NavLink key={to} to={to}>
+            <Icon size={22} aria-hidden />
+            <span>{label}</span>
+          </NavLink>
+        ))}
+      </nav>
     </div>
   );
 }
