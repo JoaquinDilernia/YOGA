@@ -16,7 +16,7 @@ const SECRET = process.env.SESSION_SECRET || 'cambiar-esto';
 const SESSION_DAYS = 30;
 
 // Tiendas: STORES='[{"key":"perritos","name":"Yoga y Patitas","id":"123","token":"..."}]'
-// Usuarios: USERS='[{"name":"Marcos","password":"...","stores":["perritos","gatitos"]}]'
+// Usuarios: USERS='[{"name":"Marcos","password":"...","stores":["perritos","gatitos"]}]' · "stores":["*"] = todas
 const parseEnv = (name) => {
   try {
     return JSON.parse(process.env[name] || '[]');
@@ -29,7 +29,8 @@ const STORES = parseEnv('STORES').filter((s) => s.key && s.id && s.token);
 const USERS = parseEnv('USERS').filter((u) => u.name && u.password && Array.isArray(u.stores));
 if (!STORES.length || !USERS.length) console.warn('[turnos] Faltan STORES o USERS');
 
-const userStores = (user) => STORES.filter((s) => user.stores.includes(s.key)).map((s) => ({ key: s.key, name: s.name }));
+const hasStore = (user, key) => user.stores.includes('*') || user.stores.includes(key);
+const userStores = (user) => STORES.filter((s) => hasStore(user, s.key)).map((s) => ({ key: s.key, name: s.name }));
 
 // ---------- Sesión (token firmado, sin base de datos) ----------
 const sign = (payload) => crypto.createHmac('sha256', SECRET).update(payload).digest('base64url');
@@ -93,7 +94,7 @@ if (process.env.DATABASE_URL) {
   pauta = await createPauta({
     db,
     stores: STORES,
-    canAccess: (user, key) => user.stores.includes(key),
+    canAccess: hasStore,
     getStoreData,
     metaToken: process.env.META_ACCESS_TOKEN || null,
     anthropic,
