@@ -111,7 +111,7 @@ if (process.env.DATABASE_URL) {
 const app = express();
 app.set('trust proxy', 1);
 // Front servido aparte (Hostinger): FRONTEND_URL con los orígenes permitidos, separados por coma
-const ORIGINS = (process.env.FRONTEND_URL || '').split(',').map((o) => o.trim().replace(//+$/, '')).filter(Boolean);
+const ORIGINS = (process.env.FRONTEND_URL || '').split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean);
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && ORIGINS.includes(origin)) {

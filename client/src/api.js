@@ -1,7 +1,7 @@
 const KEY = 'turnos_session';
 
 // API en otro dominio (front en Hostinger): VITE_API_URL; vacío = mismo origen
-const API = (import.meta.env.VITE_API_URL || '').replace(//+$/, '');
+const API = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
 export const apiUrl = (url) => (typeof url === 'string' && url.startsWith('/api') ? API + url : url);
 
 export function getSession() {
