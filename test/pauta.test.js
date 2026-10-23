@@ -32,6 +32,7 @@ function fakeMeta(accountId, calls) {
     createCampaign: log('createCampaign'),
     createAdset: log('createAdset'),
     createCreative: log('createCreative'),
+    getCreative: async (id) => ({ id, object_story_spec: { page_id: 'p1', video_data: { video_id: 'v1', image_hash: 'h1', image_url: 'https://img', message: 'Hola' } } }),
     createAd: log('createAd'),
     uploadImage: async (buf) => {
       calls.push({ accountId, op: 'uploadImage', args: [buf.length] });
@@ -257,6 +258,50 @@ describe('corrida del agente', () => {
     const failed = (await as('marcos').post(`/api/pauta/perritos/decisions/${d.id}/approve`)).body.decision;
     expect(failed).toMatchObject({ status: 'failed', error: 'Falta cargar el píxel en Ajustes de Pauta.' });
     expect(calls.filter((c) => c.op === 'createAdset')).toHaveLength(0);
+  });
+});
+
+describe('estructura TechDi', () => {
+  it('propone campaña, conjuntos y anuncios juntos; al aprobar crea todo con el prefijo y la campaña pausada', async () => {
+    const targeting = { geo_locations: { countries: ['AR'] }, targeting_automation: { advantage_audience: 1 } };
+    const script = [
+      {
+        stop_reason: 'tool_use',
+        content: [toolUse('t1', 'propose_campaign', {
+          name: 'VENTAS_GIFT', daily_budget_ars: 15000,
+          adsets: [{ name: 'GIFT_ABIERTO', targeting, copy_creatives: [{ creative_id: '777', label: 'ELMEJORCUMPLE' }] }],
+          title: 'Campaña de gift', reason: 'Fiestas', expected_impact: 'Ventas de gift',
+        })],
+      },
+      { stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] },
+    ];
+    const { as, pauta, calls, anthropic } = await setup({ script });
+    await as('marcos').put('/api/pauta/perritos/settings', { meta_ad_account_id: '123', meta_pixel_id: '999' });
+    await (await pauta.startRun('perritos', 'manual', 'Marcos')).done;
+    expect(anthropic.received[0].system).toContain('TechDi');
+    const [d] = (await as('marcos').get('/api/pauta/perritos/overview')).body.pending;
+    const done = (await as('marcos').post(`/api/pauta/perritos/decisions/${d.id}/approve`)).body.decision;
+    expect(done.status).toBe('executed');
+
+    const byOp = (op) => calls.filter((c) => c.op === op).map((c) => c.args[0]);
+    expect(byOp('createCampaign')[0]).toMatchObject({ name: 'TechDi_VENTAS_GIFT', status: 'PAUSED', daily_budget: 1500000 });
+    expect(byOp('createAdset')[0]).toMatchObject({
+      name: 'TechDi_GIFT_ABIERTO', status: 'ACTIVE', campaign_id: 'createCampaign-1',
+      promoted_object: { pixel_id: '999', custom_event_type: 'PURCHASE' },
+    });
+    // El anuncio usa una copia del creativo con UTMs (sin image_url, que Meta no acepta junto al hash)
+    const copy = byOp('createCreative')[0];
+    expect(copy.url_tags).toContain('utm_campaign={{campaign.name}}');
+    expect(copy.object_story_spec.video_data).toEqual({ video_id: 'v1', image_hash: 'h1', message: 'Hola' });
+    expect(byOp('createAd')[0]).toMatchObject({ adsetId: 'createAdset-1', creativeId: 'createCreative-1', status: 'ACTIVE' });
+    expect(byOp('createAd')[0].name).toMatch(/^TECHDIGIFTABIERTO_ELMEJORCUMPLE_\d{8}$/);
+  });
+
+  it('el prefijo no se duplica', async () => {
+    const { agencyName } = await import('../src/pauta/creativeSpec.js');
+    expect(agencyName('VENTAS_GIFT')).toBe('TechDi_VENTAS_GIFT');
+    expect(agencyName('TechDi_VENTAS_GIFT')).toBe('TechDi_VENTAS_GIFT');
+    expect(agencyName('techdi VENTAS')).toBe('TechDi_VENTAS');
   });
 });
 

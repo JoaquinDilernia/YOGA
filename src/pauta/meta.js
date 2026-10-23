@@ -102,6 +102,8 @@ export function createMetaClient({ accessToken, accountId, fetchFn = fetch, retr
       const { data = [] } = await req(`${videoId}/thumbnails`);
       return (data.find((t) => t.is_preferred) ?? data[0])?.uri ?? null;
     },
+    // Lo necesario para copiar un creativo existente (ver buildCopyCreativeSpec)
+    getCreative: (creativeId) => req(creativeId, { params: { fields: 'name,object_story_spec,asset_feed_spec,degrees_of_freedom_spec,url_tags' } }),
     createCreative: (spec) => req(`${accountId}/adcreatives`, { method: 'POST', body: spec }),
     createAd: ({ name, adsetId, creativeId, status }) =>
       req(`${accountId}/ads`, { method: 'POST', body: { name, adset_id: adsetId, creative: { creative_id: creativeId }, status } }),

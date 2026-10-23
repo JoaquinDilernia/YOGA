@@ -1,7 +1,7 @@
 import { TOOL_DEFINITIONS, OFFLINE_TOOL_DEFINITIONS, READ_ONLY_TOOLS, META_ACTIONS } from './tools.js';
 import { buildSystemPrompt } from './systemPrompt.js';
 import { buildSnapshot } from './snapshot.js';
-import { buildAdName, buildIgPostCreativeSpec, buildLinkCreativeSpec } from './creativeSpec.js';
+import { agencyName, buildAdName, buildCopyCreativeSpec, buildIgPostCreativeSpec, buildLinkCreativeSpec } from './creativeSpec.js';
 import { artDate } from './metrics.js';
 import { conflict } from '../errors.js';
 
@@ -84,6 +84,52 @@ export function createExecutor({ meta, repo, store, settings, media }) {
     }
   }
 
+  // Conjunto optimizando compras del píxel; sin presupuesto propio si la campaña es CBO
+  async function createAdset({ campaignId, name, targeting: base, dailyBudgetArs, status }) {
+    const pixelId = need('meta_pixel_id', 'el píxel');
+    const targeting = { ...base };
+    if (!targeting.targeting_automation) targeting.targeting_automation = { advantage_audience: 0 };
+    const adset = await meta.createAdset({
+      campaign_id: campaignId, name, status, targeting,
+      billing_event: 'IMPRESSIONS', optimization_goal: 'OFFSITE_CONVERSIONS',
+      promoted_object: { pixel_id: pixelId, custom_event_type: 'PURCHASE' },
+      ...(dailyBudgetArs ? { daily_budget: Math.round(dailyBudgetArs * 100), bid_strategy: 'LOWEST_COST_WITHOUT_CAP' } : {}),
+    });
+    return adset.id;
+  }
+
+  // Anuncio nuevo con una copia del creativo (mismo material, con UTMs) en otro conjunto
+  async function copyAd({ creativeId, adsetId, adsetName, label }) {
+    const name = buildAdName({ adsetName: adsetName || adsetId, creativeName: label || `COPIA${String(creativeId).slice(-6)}`, date: artDate() });
+    const source = await meta.getCreative(creativeId);
+    const { id: copyId } = await meta.createCreative(buildCopyCreativeSpec(source, { name }));
+    const ad = await meta.createAd({ name, adsetId, creativeId: copyId, status: 'ACTIVE' });
+    return { ad_id: ad.id, name };
+  }
+
+  // Campaña de ventas con sus conjuntos y anuncios de una vez. La campaña nace PAUSADA y es la única llave:
+  // conjuntos y anuncios quedan activos adentro y arrancan cuando el equipo la prende.
+  async function createCampaign(input) {
+    if (input.adsets?.length) need('meta_pixel_id', 'el píxel');
+    const campaign = await meta.createCampaign({
+      name: agencyName(input.name), objective: 'OUTCOME_SALES', status: 'PAUSED', special_ad_categories: [],
+      daily_budget: Math.round(input.daily_budget_ars * 100), bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
+    });
+    const created = [];
+    try {
+      for (const a of input.adsets ?? []) {
+        const name = agencyName(a.name);
+        const row = { adset_id: await createAdset({ campaignId: campaign.id, name, targeting: a.targeting, status: 'ACTIVE' }), name, ads: [] };
+        created.push(row);
+        for (const c of a.copy_creatives ?? []) row.ads.push(await copyAd({ creativeId: c.creative_id, adsetId: row.adset_id, adsetName: name, label: c.label }));
+      }
+    } catch (err) {
+      const done = created.map((r) => `${r.name} (${r.ads.length} anuncios)`).join(', ') || 'sin conjuntos';
+      throw new Error(`${err.message} — La campaña ${campaign.id} quedó creada y pausada, ${done}.`);
+    }
+    return { campaign_id: campaign.id, adsets: created };
+  }
+
   return async function execute(tool, input, ctx = {}) {
     switch (tool) {
       case 'pause_ad':
@@ -95,30 +141,18 @@ export function createExecutor({ meta, repo, store, settings, media }) {
       case 'propose_budget_change':
         await meta.updateDailyBudget(input.object_id, Math.round(input.proposed_budget_ars * 100));
         return { [input.object_id]: input.proposed_budget_ars };
-      case 'propose_campaign': {
-        const campaign = await meta.createCampaign({
-          name: input.name, objective: 'OUTCOME_SALES', status: 'PAUSED', special_ad_categories: [],
-          daily_budget: Math.round(input.daily_budget_ars * 100), bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
-        });
-        return { campaign_id: campaign.id };
-      }
+      case 'propose_campaign':
+        return createCampaign(input);
       case 'propose_adset': {
-        const pixelId = need('meta_pixel_id', 'el píxel');
-        const targeting = { ...input.targeting };
-        if (!targeting.targeting_automation) targeting.targeting_automation = { advantage_audience: 0 };
-        const adset = await meta.createAdset({
-          campaign_id: input.campaign_id, name: input.name, status: 'PAUSED', targeting,
-          billing_event: 'IMPRESSIONS', optimization_goal: 'OFFSITE_CONVERSIONS',
-          promoted_object: { pixel_id: pixelId, custom_event_type: 'PURCHASE' },
-          ...(input.daily_budget_ars ? { daily_budget: Math.round(input.daily_budget_ars * 100), bid_strategy: 'LOWEST_COST_WITHOUT_CAP' } : {}),
+        const name = agencyName(input.name);
+        const adsetId = await createAdset({ campaignId: input.campaign_id, name, targeting: input.targeting, dailyBudgetArs: input.daily_budget_ars, status: 'PAUSED' });
+        return { adset_id: adsetId, name };
+      }
+      case 'reuse_ad':
+        return copyAd({
+          creativeId: input.creative_id, adsetId: input.adset_id, adsetName: input.adset_name,
+          label: input.ad_name || `COPIA${String(input.source_ad_id ?? '').slice(-6)}`,
         });
-        return { adset_id: adset.id };
-      }
-      case 'reuse_ad': {
-        const name = input.ad_name || buildAdName({ adsetName: input.adset_name || input.adset_id, creativeName: `COPIA${String(input.source_ad_id ?? '').slice(-6)}`, date: artDate() });
-        const ad = await meta.createAd({ name, adsetId: input.adset_id, creativeId: input.creative_id, status: 'ACTIVE' });
-        return { ad_id: ad.id, name };
-      }
       case 'create_ad':
         return publishCreative(input, ctx);
       case 'promote_ig_post':

@@ -12,7 +12,7 @@ const product = (id, name, variants, published = true) => ({
 });
 const order = (id, created, items, { total = 34900, landing = '', payment = 'paid' } = {}) => ({
   id, number: id, status: 'open', payment_status: payment, created_at: created, total: String(total), currency: 'ARS', landing_url: landing,
-  products: items.map(([productId, variantId, qty = 1]) => ({ product_id: productId, variant_id: variantId, quantity: qty, price: '34900', variant_values: [] })),
+  products: items.map(([productId, variantId, qty = 1]) => ({ product_id: productId, variant_id: variantId, name: '', quantity: qty, price: '34900', variant_values: [] })),
 });
 
 function raw() {
@@ -42,7 +42,22 @@ describe('contexto de la tienda para el agente', () => {
     // reservas no anuladas: 2 + 1 + 1 (el pago pendiente ocupa lugar, como en el panel de turnos)
     expect(c.booked).toBe(4);
     expect(c.fillPct).toBe(22);
-    expect(shop.otherProducts).toEqual([{ name: 'Gift Card Cumpleaños', price: 34900, url: 'https://tienda/gift' }]);
+    expect(shop.otherProducts).toEqual([{ name: 'Gift Card Cumpleaños', kind: 'gift', price: 34900, url: 'https://tienda/gift' }]);
+  });
+
+  it('separa las ventas por producto (clases / gift / cumple) y por campaña según la UTM', () => {
+    const r = raw();
+    r.products.push({ id: 4, name: { es: 'Festejá tu Cumple' }, published: true, created_at: '2026-10-01T00:00:00Z', variants: [{ id: 41, price: '0', values: [] }] });
+    r.orders.push(
+      order(104, '2026-10-18T13:00:00Z', [[3, 31]], { landing: 'https://tienda/gift?utm_source=meta&utm_campaign=TechDi_VENTAS_GIFT&utm_content=x' }),
+      order(105, '2026-10-18T14:00:00Z', [[3, 31, 2], [1, 11]], { total: 104700 }),
+      order(106, '2026-10-18T15:00:00Z', [[4, 41]]),
+    );
+    const { sales } = buildShopContext({ raw: r, turnos: buildTurnos(store, r) }, NOW);
+    expect(sales.last30dByProduct.gift).toEqual({ orders: 2, units: 3, revenue: 104700, fromMetaOrders: 1 });
+    expect(sales.last30dByProduct.clases).toMatchObject({ orders: 4, units: 5, fromMetaOrders: 1 });
+    expect(sales.last30dByProduct.cumple).toMatchObject({ orders: 1, units: 1 });
+    expect(sales.last30dByCampaign).toEqual({ TechDi_VENTAS_GIFT: { orders: 1, revenue: 34900 } });
   });
 
   it('cuenta ventas pagadas y estima cuáles vinieron de Meta', () => {

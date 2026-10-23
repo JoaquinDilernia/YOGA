@@ -79,6 +79,36 @@ export function buildIgPostCreativeSpec({ name, pageId, igUserId, mediaId, link,
   };
 }
 
+// Copia de un creativo que ya está en la cuenta (de la agencia anterior o propio) para usarlo en otro conjunto:
+// mismo material y texto, pero con las UTMs (los creativos no se pueden editar, hay que crear uno nuevo).
+// Se sacan los campos que Meta devuelve pero no acepta al crear: ids de las etiquetas e image_url si ya hay hash.
+const withoutIds = (v) => (Array.isArray(v) ? v.map(withoutIds)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'id').map(([k, x]) => [k, withoutIds(x)])) : v);
+
+// Meta devuelve opciones de IA que ya no acepta al crear (se configuran función por función)
+const DEPRECATED_FEATURES = ['standard_enhancements'];
+
+export function buildCopyCreativeSpec(source, { name }) {
+  const story = structuredClone(source.object_story_spec);
+  if (story.video_data?.image_hash) delete story.video_data.image_url;
+  const features = { ...source.degrees_of_freedom_spec?.creative_features_spec };
+  for (const f of DEPRECATED_FEATURES) delete features[f];
+  return {
+    name,
+    object_story_spec: story,
+    url_tags: URL_TAGS,
+    ...(source.asset_feed_spec ? { asset_feed_spec: withoutIds(source.asset_feed_spec) } : {}),
+    ...(Object.keys(features).length ? { degrees_of_freedom_spec: { creative_features_spec: features } } : {}),
+  };
+}
+
+// Lo que arma la agencia (TechDi) lleva el prefijo en el nombre: así se distingue de lo heredado
+export const AGENCY_PREFIX = 'TechDi_';
+export const agencyName = (name) => {
+  const n = String(name ?? '').trim().replace(/^techdi[_\s|-]*/i, '');
+  return `${AGENCY_PREFIX}${n}`;
+};
+
 const clean = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, '');
 
 // Convención de nombres: {CONJUNTO}_{PIEZA}_{YYYYMMDD}

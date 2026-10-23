@@ -44,12 +44,29 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'propose_campaign',
-    description: 'Proponer una campaña nueva de ventas (objetivo Ventas, presupuesto a nivel campaña). Se crea PAUSADA y sin conjuntos: en una próxima corrida proponés los conjuntos con propose_adset. Usalo solo si no hay una campaña de ventas que sirva.',
+    description: 'Proponer una campaña nueva de ventas web (objetivo Ventas, optimiza compras del píxel, presupuesto a nivel campaña) con sus conjuntos y anuncios, todo en una sola aprobación. La campaña se crea PAUSADA y es la única llave: los conjuntos y anuncios quedan listos adentro y arrancan cuando el equipo la prende. Los anuncios se arman copiando creativos que ya están en la cuenta (creativeId de ads[]), con UTMs. El nombre lleva el prefijo TechDi_ (se agrega solo). Usalo solo si no hay una campaña TechDi_ que sirva para ese producto.',
     input_schema: {
       type: 'object',
       properties: {
-        name: s('Nombre en MAYÚSCULAS con guiones bajos (ej. VENTAS_CLASES_NOV)'),
+        name: s('Nombre en MAYÚSCULAS con guiones bajos, sin el prefijo (ej. VENTAS_GIFT → queda TechDi_VENTAS_GIFT)'),
         daily_budget_ars: n('Presupuesto diario de la campaña en pesos'),
+        adsets: {
+          type: 'array',
+          description: 'Conjuntos de la campaña (pocos y amplios: 1 a 3)',
+          items: {
+            type: 'object',
+            properties: {
+              name: s('Nombre del conjunto sin el prefijo (ej. GIFT_ABIERTO)'),
+              targeting: { type: 'object', description: 'Targeting de Graph API (igual que en propose_adset)' },
+              copy_creatives: {
+                type: 'array',
+                description: 'Creativos existentes a copiar como anuncios del conjunto',
+                items: { type: 'object', properties: { creative_id: s('creativeId de ads[]'), label: s('Nombre corto de la pieza (ej. ELMEJORCUMPLE)') }, required: ['creative_id'] },
+              },
+            },
+            required: ['name', 'targeting'],
+          },
+        },
         ...why,
       },
       required: ['name', 'daily_budget_ars', ...whyReq],
@@ -57,12 +74,12 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'propose_adset',
-    description: 'Proponer un conjunto nuevo dentro de una campaña existente (por ejemplo para probar otro público). Buscá antes los intereses reales con search_interest — nunca inventes IDs. El conjunto se crea PAUSADO, optimizando compras del píxel de la tienda; sin presupuesto propio si la campaña es CBO.',
+    description: 'Proponer un conjunto nuevo dentro de una campaña existente (por ejemplo para probar otro público). Buscá antes los intereses reales con search_interest — nunca inventes IDs. El conjunto se crea PAUSADO, optimizando compras del píxel de la tienda; sin presupuesto propio si la campaña es CBO. El nombre lleva el prefijo TechDi_ (se agrega solo).',
     input_schema: {
       type: 'object',
       properties: {
         campaign_id: s('ID de la campaña'),
-        name: s('Nombre del conjunto, en MAYÚSCULAS con guiones bajos (ej. VENTAS_PALERMO_AMANTESPERROS)'),
+        name: s('Nombre del conjunto, en MAYÚSCULAS con guiones bajos, sin el prefijo (ej. CLASES_AMANTESPERROS)'),
         targeting: { type: 'object', description: 'Targeting de Graph API: geo_locations (ej. ciudad o radio alrededor de la sede), age_min, age_max, genders, flexible_spec con intereses, targeting_automation.advantage_audience (0 o 1)' },
         daily_budget_ars: n('Solo si la campaña NO es CBO: presupuesto diario del conjunto en pesos'),
         ...why,
@@ -72,7 +89,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'reuse_ad',
-    description: 'Proponer copiar un anuncio que ya existe en la cuenta (mismo creativo, mismo link) a otro conjunto. Sirve para llevar un anuncio que vende bien a un público nuevo. El anuncio nuevo nace ACTIVO dentro del conjunto (si el conjunto está pausado no gasta).',
+    description: 'Proponer copiar un anuncio que ya existe en la cuenta (mismo material, mismo texto y link, con UTMs) a otro conjunto. Sirve para llevar un anuncio que vende bien a un público nuevo, o los creativos heredados a la estructura TechDi_. El anuncio nuevo nace ACTIVO dentro del conjunto (si el conjunto está pausado no gasta).',
     input_schema: {
       type: 'object',
       properties: {
