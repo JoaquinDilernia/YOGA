@@ -117,7 +117,7 @@ export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, g
   async function metaOf(store) {
     const settings = await repo.getSettings(store);
     const meta = metaFor(settings);
-    if (!meta) throw unavailable(hasMetaToken ? 'Falta cargar la cuenta publicitaria de Meta en Ajustes.' : 'Falta el token de Meta (META_ACCESS_TOKEN) en el servidor.');
+    if (!meta) throw unavailable(hasMetaToken(store) ? 'Falta cargar la cuenta publicitaria de Meta en Ajustes.' : `Falta el token de Meta de esta tienda (META_ACCESS_TOKEN_${store.toUpperCase()}) en el servidor.`);
     return { settings, meta };
   }
 
@@ -137,7 +137,7 @@ export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, g
       getShop(store).then((s) => { shop = s; }, (err) => { shopError = String(err.message || err); }),
     ]);
     res.json({
-      configured: { metaToken: hasMetaToken, metaAccount: Boolean(settings.meta_ad_account_id), agent: Boolean(startRun) },
+      configured: { metaToken: hasMetaToken(store), metaAccount: Boolean(settings.meta_ad_account_id), agent: Boolean(startRun) },
       settings, lastRun: runs[0] ?? null, pending, questions, requests, snapshot: snap, metaError, shop, shopError,
     });
   }));
@@ -179,7 +179,7 @@ export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, g
     }
     res.json({
       range: { since, until, previous: previousRange(since, until) },
-      configured: { metaToken: hasMetaToken, metaAccount: Boolean(settings.meta_ad_account_id) },
+      configured: { metaToken: hasMetaToken(store), metaAccount: Boolean(settings.meta_ad_account_id) },
       meta: metaReport, metaError, shop, shopError,
     });
   }));

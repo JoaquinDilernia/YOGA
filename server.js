@@ -96,12 +96,15 @@ if (process.env.DATABASE_URL) {
     stores: STORES,
     canAccess: hasStore,
     getStoreData,
-    metaToken: process.env.META_ACCESS_TOKEN || null,
+    // Cada marca tiene su usuario del sistema en su portfolio: META_ACCESS_TOKEN_<TIENDA>, o META_ACCESS_TOKEN para todas
+    metaToken: (key) => process.env[`META_ACCESS_TOKEN_${key.toUpperCase()}`] || process.env.META_ACCESS_TOKEN || null,
     anthropic,
     model: process.env.PAUTA_MODEL || undefined,
     storage,
   });
-  if (!process.env.META_ACCESS_TOKEN) console.warn('[pauta] META_ACCESS_TOKEN no está definida: Pauta sin conexión a Meta');
+  for (const { key } of STORES) {
+    if (!process.env[`META_ACCESS_TOKEN_${key.toUpperCase()}`] && !process.env.META_ACCESS_TOKEN) console.warn(`[pauta:${key}] sin token de Meta (META_ACCESS_TOKEN_${key.toUpperCase()})`);
+  }
   if (!anthropic) console.warn('[pauta] ANTHROPIC_API_KEY no está definida: el agente no corre');
   cron.schedule('0 9 * * *', () => pauta.runDaily(), { timezone: 'America/Argentina/Buenos_Aires' });
 } else {

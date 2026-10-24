@@ -117,6 +117,18 @@ describe('pauta por tienda', () => {
     expect(perritos.body.snapshot.campaigns[0]).toMatchObject({ id: '10', dailyBudgetArs: 10000 });
   });
 
+  it('cada tienda usa su propio token de Meta', async () => {
+    const { as } = await setup({ metaToken: (key) => (key === 'perritos' ? 'tok-perritos' : null) });
+    await as('marcos').put('/api/pauta/perritos/settings', { meta_ad_account_id: '123' });
+    await as('marcos').put('/api/pauta/gatitos/settings', { meta_ad_account_id: '456' });
+
+    const perritos = await as('marcos').get('/api/pauta/perritos/overview');
+    expect(perritos.body.configured).toMatchObject({ metaToken: true, metaAccount: true });
+    const gatitos = await as('marcos').get('/api/pauta/gatitos/overview');
+    expect(gatitos.body.configured).toMatchObject({ metaToken: false, metaAccount: true });
+    expect(gatitos.body.snapshot).toBeNull();
+  });
+
   it('valida los ajustes', async () => {
     const { as } = ctx;
     expect((await as('marcos').put('/api/pauta/perritos/settings', { monthly_cap_ars: -5 })).status).toBe(400);

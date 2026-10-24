@@ -6,15 +6,18 @@ import { createPautaRouter } from './routes.js';
 import { createMediaService } from './media.js';
 
 // Agente de pauta: una cuenta de Meta por tienda, con su presupuesto, contexto e historial.
-// metaToken: token de usuario del sistema del Business Manager con acceso a las cuentas de las dos marcas.
+// metaToken: token de usuario del sistema de Meta. Un string (el mismo para todas las tiendas) o una función
+// store_key → token, porque cada marca tiene su propio portfolio, app y usuario del sistema.
 // storage: donde se guardan las piezas (bucket en producción, carpeta local en desarrollo)
 export async function createPauta({ db, stores, canAccess, getStoreData, metaToken, anthropic, model, storage, metaFactory = createMetaClient }) {
   const repo = createPautaRepo(db);
   await repo.releaseStuckCreatives();
   const media = createMediaService({ repo, storage });
-  const metaFor = (settings) => (metaToken && settings.meta_ad_account_id
-    ? metaFactory({ accessToken: metaToken, accountId: settings.meta_ad_account_id })
-    : null);
+  const tokenFor = (key) => (typeof metaToken === 'function' ? metaToken(key) : metaToken) || null;
+  const metaFor = (settings) => {
+    const accessToken = tokenFor(settings.store_key);
+    return accessToken && settings.meta_ad_account_id ? metaFactory({ accessToken, accountId: settings.meta_ad_account_id }) : null;
+  };
   const getShop = async (key) => buildShopContext(await getStoreData(stores.find((s) => s.key === key)));
   const getRaw = async (key) => (await getStoreData(stores.find((s) => s.key === key))).raw;
   const startRun = anthropic ? createAgentRunner({ anthropic, repo, metaFor, getShop, stores, media, model }) : null;
@@ -33,6 +36,6 @@ export async function createPauta({ db, stores, canAccess, getStoreData, metaTok
     }
   }
 
-  const router = createPautaRouter({ repo, stores, canAccess, metaFor, getShop, getRaw, startRun, hasMetaToken: Boolean(metaToken), media });
+  const router = createPautaRouter({ repo, stores, canAccess, metaFor, getShop, getRaw, startRun, hasMetaToken: (key) => Boolean(tokenFor(key)), media });
   return { repo, router, runDaily, startRun, media };
 }
