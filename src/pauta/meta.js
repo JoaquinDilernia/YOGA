@@ -30,6 +30,12 @@ export function createMetaClient({ accessToken, accountId, fetchFn = fetch, retr
       throw new Error(`Meta respondió HTTP ${res.status} sin datos válidos${text ? `: ${text.slice(0, 200)}` : ''}`);
     }
     if (json.error) {
+      // Con saldo impago (ad_account_status 3) Meta responde un #200 genérico: se avisa qué pasa de verdad
+      if (/"ad_account_status":3\b/.test(String(json.error.error_data ?? ''))) {
+        const err = new Error('La cuenta publicitaria tiene un saldo impago en Meta: hasta pagarlo (Facturación y pagos) no se pueden crear anuncios y los activos no se entregan.');
+        err.code = json.error.code;
+        throw err;
+      }
       const detail = json.error.error_user_msg || (json.error.error_subcode ? `subcode ${json.error.error_subcode}` : null);
       const err = new Error(`Meta ${json.error.code}: ${json.error.message}${detail ? ` (${detail})` : ''}`);
       err.code = json.error.code;
