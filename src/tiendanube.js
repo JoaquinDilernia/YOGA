@@ -17,7 +17,7 @@ export async function tnGetAll(store, resource, fields, fetchFn = fetch) {
   return out;
 }
 
-async function tnGetStore(store, fetchFn = fetch) {
+export async function tnGetStore(store, fetchFn = fetch) {
   const res = await fetchFn(`https://api.tiendanube.com/v1/${store.id}/store?fields=url_with_protocol`, {
     headers: { Authentication: `bearer ${store.token}`, 'User-Agent': UA },
   });

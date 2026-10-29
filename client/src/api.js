@@ -87,6 +87,14 @@ export const pautaApi = (token, store) => ({
   deleteLearning: (id) => authRequest('DELETE', pautaUrl(store, `/learnings/${id}`), token),
 });
 
+// Entradas por mail
+const entradasUrl = (store, path = '') => `/api/entradas/${encodeURIComponent(store)}${path}`;
+export const entradasApi = (token, store) => ({
+  list: () => authGet(entradasUrl(store), token),
+  retry: (id) => authRequest('POST', entradasUrl(store, `/${id}/retry`), token),
+  resend: (id, email) => authRequest('POST', entradasUrl(store, `/${id}/resend`), token, email ? { email } : {}),
+});
+
 // Piezas: el archivo va como cuerpo del PUT; XHR para poder mostrar el progreso de la subida
 function uploadFile(url, token, file, onProgress) {
   return new Promise((resolve, reject) => {

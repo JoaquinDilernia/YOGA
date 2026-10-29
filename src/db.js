@@ -139,6 +139,31 @@ const MIGRATIONS = [
   `
   ALTER TABLE pauta_creatives ADD COLUMN publish_error text;
   `,
+  // Entradas por mail: una fila por orden. Cada paso (cupones, mail, marcar en TN) guarda cuándo se hizo,
+  // así un reintento sigue desde donde quedó y nunca crea cupones ni manda el mail dos veces
+  `
+  CREATE TABLE entradas (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_key text NOT NULL,
+    order_id bigint NOT NULL,
+    order_number text NOT NULL DEFAULT '',
+    name text NOT NULL DEFAULT '',
+    email text NOT NULL DEFAULT '',
+    classes jsonb NOT NULL DEFAULT '[]',
+    gifts jsonb NOT NULL DEFAULT '[]',
+    coupons jsonb NOT NULL DEFAULT '[]',
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','failed','skipped')),
+    attempts integer NOT NULL DEFAULT 0,
+    error text,
+    mail_sent_at timestamptz,
+    delivered_at timestamptz,
+    order_created_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (store_key, order_id)
+  );
+  CREATE INDEX entradas_recent ON entradas (store_key, created_at DESC);
+  `,
 ];
 
 export async function migrate(db) {

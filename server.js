@@ -9,6 +9,8 @@ import { connect } from './src/db.js';
 import { createLocalStorage, createS3Storage } from './src/storage.js';
 import { createPauta } from './src/pauta/index.js';
 import { pautaErrorHandler } from './src/pauta/routes.js';
+import { createEntradas, entradasErrorHandler } from './src/entradas/index.js';
+import { createMailer } from './src/entradas/mailer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -82,8 +84,35 @@ const getTurnos = async (store, fresh) => (await getStoreData(store, fresh)).tur
 // ---------- Pauta (opcional: sin DATABASE_URL el panel muestra solo turnos) ----------
 let pauta = null;
 let storage = null;
+let entradas = null;
 if (process.env.DATABASE_URL) {
   const db = await connect(process.env.DATABASE_URL);
+
+  // Entradas por mail: se prende con ENTRADAS_DESDE (solo las órdenes creadas desde ese momento).
+  // Mail por tienda: MAIL_<TIENDA>, o MAIL para todas (sale con el nombre de cada tienda como remitente)
+  const since = process.env.ENTRADAS_DESDE;
+  if (since && !Number.isNaN(new Date(since).getTime())) {
+    const mailers = new Map();
+    for (const s of STORES) {
+      const own = parseEnv(`MAIL_${s.key.toUpperCase()}`);
+      const config = own?.user ? own : parseEnv('MAIL');
+      if (config?.user && config?.pass) mailers.set(s.key, createMailer(config, s.name));
+      else console.warn(`[entradas:${s.key}] sin MAIL_${s.key.toUpperCase()} ni MAIL: no se mandan entradas de ${s.name}`);
+    }
+    entradas = createEntradas({
+      db,
+      stores: STORES,
+      mailerFor: (key) => mailers.get(key) || null,
+      since: new Date(since).toISOString(),
+      giftValidityDays: Number(process.env.GIFT_VALIDEZ_DIAS) || 365,
+      // ENTRADAS_SIN_LUGAR=1: la entrada no muestra la dirección (sede a confirmar)
+      hidePlace: process.env.ENTRADAS_SIN_LUGAR === '1',
+    });
+    cron.schedule('*/5 * * * *', () => entradas.runOnce(), { timezone: 'America/Argentina/Buenos_Aires' });
+  } else {
+    console.warn('[entradas] ENTRADAS_DESDE no está definida (o no es una fecha): no se mandan entradas');
+  }
+
   // Piezas: bucket S3 (Railway) si está configurado; si no, carpeta local (solo para desarrollo: se pierde en cada deploy)
   const { S3_ENDPOINT, S3_BUCKET, S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY } = process.env;
   storage = S3_ENDPOINT && S3_BUCKET && S3_ACCESS_KEY_ID && S3_SECRET_ACCESS_KEY
@@ -144,7 +173,7 @@ app.post('/api/login', (req, res) => {
 });
 
 app.get('/api/me', auth, (req, res) => {
-  res.json({ user: { name: req.user.name }, stores: userStores(req.user), pauta: Boolean(pauta) });
+  res.json({ user: { name: req.user.name }, stores: userStores(req.user), pauta: Boolean(pauta), entradas: Boolean(entradas) });
 });
 
 app.get('/api/turnos', auth, async (req, res) => {
@@ -178,6 +207,15 @@ if (storage?.driver === 'local') {
 }
 
 if (pauta) app.use('/api/pauta/:store', auth, pauta.router, pautaErrorHandler);
+if (entradas) {
+  const withStore = (req, res, next) => {
+    const store = hasStore(req.user, req.params.store) && STORES.find((s) => s.key === req.params.store);
+    if (!store) return res.status(403).json({ error: 'No tenés acceso a esa tienda' });
+    req.store = store;
+    next();
+  };
+  app.use('/api/entradas/:store', auth, withStore, entradas.router, entradasErrorHandler);
+}
 
 const dist = path.join(__dirname, 'client', 'dist');
 app.use(express.static(dist));

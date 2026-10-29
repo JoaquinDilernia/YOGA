@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { BarChart3, CalendarDays, Download, List, LogOut, Megaphone, RefreshCw } from 'lucide-react';
+import { BarChart3, CalendarDays, Download, List, LogOut, Mail, Megaphone, RefreshCw } from 'lucide-react';
 import { fetchMe, fetchTurnos, getLastStore, getSession, setLastStore, setSession } from './api.js';
 import { downloadCSV, matchesQuery } from './utils.js';
 import Login from './components/Login.jsx';
@@ -8,10 +8,12 @@ import ListView from './components/ListView.jsx';
 import CalendarView from './components/CalendarView.jsx';
 import PautaView from './components/pauta/PautaView.jsx';
 import ReportsView from './components/reports/ReportsView.jsx';
+import EnviosView from './components/EnviosView.jsx';
 
 const NAV = [
   { to: '/lista', label: 'Lista', icon: List },
   { to: '/calendario', label: 'Calendario', icon: CalendarDays },
+  { to: '/envios', label: 'Envíos', icon: Mail, entradas: true },
   { to: '/pauta', label: 'Pauta', icon: Megaphone, pauta: true },
   { to: '/reportes', label: 'Reportes', icon: BarChart3, pauta: true },
 ];
@@ -26,10 +28,12 @@ export default function App() {
   const [query, setQuery] = useState('');
   // null hasta saber si el servidor tiene la pauta prendida
   const [pautaEnabled, setPautaEnabled] = useState(null);
+  const [entradasEnabled, setEntradasEnabled] = useState(null);
   const path = useLocation().pathname;
   const onReports = path.startsWith('/reportes');
-  // Pauta y Reportes no usan la lista de turnos ni su buscador
-  const onPauta = path.startsWith('/pauta') || onReports;
+  const onEnvios = path.startsWith('/envios');
+  // Pauta, Reportes y Envíos no usan la lista de turnos ni su buscador
+  const onPauta = path.startsWith('/pauta') || onReports || onEnvios;
 
   const logout = useCallback(() => {
     setSession(null);
@@ -51,9 +55,10 @@ export default function App() {
   useEffect(() => {
     if (!session) return;
     fetchMe(session.token)
-      .then(({ stores, pauta }) => {
+      .then(({ stores, pauta, entradas }) => {
         setStores(stores);
         setPautaEnabled(Boolean(pauta));
+        setEntradasEnabled(Boolean(entradas));
         const last = getLastStore();
         setStoreKey(stores.some((s) => s.key === last) ? last : stores[0]?.key || null);
         if (!stores.length) setError('Tu usuario no tiene tiendas asignadas');
@@ -108,7 +113,7 @@ export default function App() {
   }
 
   const currentStore = stores.find((s) => s.key === storeKey);
-  const nav = NAV.filter((n) => !n.pauta || pautaEnabled);
+  const nav = NAV.filter((n) => (!n.pauta || pautaEnabled) && (!n.entradas || entradasEnabled));
   const section = NAV.find((n) => path.startsWith(n.to))?.label ?? 'Turnos';
   const userName = session.user?.name || '';
 
@@ -206,7 +211,9 @@ export default function App() {
           {!onPauta && !data && loading && <div className="empty">Cargando turnos…</div>}
 
           {path === '/' && <Navigate to="/lista" replace />}
-          {onPauta && pautaEnabled === false && <Navigate to="/lista" replace />}
+          {onPauta && !onEnvios && pautaEnabled === false && <Navigate to="/lista" replace />}
+          {onEnvios && entradasEnabled === false && <Navigate to="/lista" replace />}
+          {onEnvios && entradasEnabled && storeKey && <EnviosView token={session.token} store={storeKey} onError={handleError} />}
           {onReports && pautaEnabled && storeKey && (
             <ReportsView
               key={storeKey}
@@ -216,7 +223,7 @@ export default function App() {
               onError={handleError}
             />
           )}
-          {onPauta && !onReports && pautaEnabled && storeKey && (
+          {onPauta && !onReports && !onEnvios && pautaEnabled && storeKey && (
             <PautaView token={session.token} store={storeKey} onError={handleError} />
           )}
 
