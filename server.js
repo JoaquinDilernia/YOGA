@@ -99,7 +99,7 @@ if (process.env.DATABASE_URL) {
     for (const s of STORES) {
       const own = parseEnv(`MAIL_${s.key.toUpperCase()}`);
       const config = own?.user ? own : parseEnv('MAIL');
-      if (config?.user && config?.pass) mailers.set(s.key, createMailer(config, s.name));
+      if (config?.user && (config.pass || config.resendKey || process.env.RESEND_API_KEY)) mailers.set(s.key, createMailer(config, s.name));
       else console.warn(`[entradas:${s.key}] sin MAIL_${s.key.toUpperCase()} ni MAIL: no se mandan entradas de ${s.name}`);
     }
     entradas = createEntradas({
