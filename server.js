@@ -44,7 +44,7 @@ function createToken(user) {
 }
 
 function readToken(token = '') {
-  const sso = readSsoToken(token, process.env.PANEL_SSO_SECRET);
+  const sso = readSsoToken(token, process.env.PANEL_SSO_SECRET, Date.now(), USERS);
   if (sso) return sso;
   const i = token.lastIndexOf('.');
   if (i < 0) return null;

@@ -9,6 +9,11 @@ describe('readSsoToken', () => {
     expect(readSsoToken(TOKEN, 'secreto', 1_000_000)).toEqual({ name: 'Marcos', stores: ['*'], sso: true });
   });
 
+  it('si hay un usuario con ese nombre, usa sus tiendas', () => {
+    const users = [{ name: 'marcos', password: 'x', stores: ['gatitos'] }];
+    expect(readSsoToken(TOKEN, 'secreto', 1_000_000, users).stores).toEqual(['gatitos']);
+  });
+
   it('rechaza vencido, firma de otro secreto, sin secreto configurado o token común', () => {
     expect(readSsoToken(TOKEN, 'secreto', 44_200_001)).toBeNull();
     expect(readSsoToken(TOKEN, 'otro', 1_000_000)).toBeNull();
