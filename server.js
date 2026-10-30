@@ -11,6 +11,7 @@ import { createPauta } from './src/pauta/index.js';
 import { pautaErrorHandler } from './src/pauta/routes.js';
 import { createEntradas, entradasErrorHandler } from './src/entradas/index.js';
 import { createMailer } from './src/entradas/mailer.js';
+import { readSsoToken } from './src/sso.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -43,6 +44,8 @@ function createToken(user) {
 }
 
 function readToken(token = '') {
+  const sso = readSsoToken(token, process.env.PANEL_SSO_SECRET);
+  if (sso) return sso;
   const i = token.lastIndexOf('.');
   if (i < 0) return null;
   const payload = token.slice(0, i);
