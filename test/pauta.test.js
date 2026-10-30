@@ -445,3 +445,97 @@ describe('promocionar posts de Instagram', () => {
     expect((await as('marcos').post('/api/pauta/perritos/ig-posts/1789/promote', { ...body, link: 'ftp://x' })).status).toBe(400);
   });
 });
+
+describe('consultas al agente', () => {
+  const text = (t) => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: t }] });
+
+  it('contesta, deja la recomendación pendiente sin tocar Meta y anota lo aprendido', async () => {
+    const { as, calls, anthropic, pauta } = await setup({
+      script: [
+        {
+          stop_reason: 'tool_use',
+          content: [
+            toolUse('t1', 'pause_ad', { ad_id: '55', ad_name: 'AD55', title: 'Pausar AD55', reason: 'Lleva a una fecha completa', expected_impact: 'Ahorro' }),
+            toolUse('t2', 'save_learning', { text: 'Los sábados se llenan solos', evidence: 'Dicho por Marcos el 30/10' }),
+          ],
+        },
+        text('Sí, **conviene pausarlo**: te lo dejé para aprobar.'),
+      ],
+    });
+    // Aunque el modo autónomo esté prendido, desde el chat no se ejecuta nada
+    await as('marcos').put('/api/pauta/perritos/settings', { meta_ad_account_id: '123', autonomous: true });
+
+    const res = await as('marcos').post('/api/pauta/perritos/chats', { message: '¿Pausamos el AD55? Los sábados se llenan solos' });
+    expect(res.status).toBe(201);
+    expect(res.body.chat).toMatchObject({ store_key: 'perritos', created_by: 'Marcos', title: '¿Pausamos el AD55? Los sábados se llenan solos' });
+    expect(res.body.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(res.body.messages[1].actions).toEqual([
+      { type: 'recommendation', id: expect.any(String), title: 'Pausar AD55' },
+      { type: 'learning', id: expect.any(String), title: 'Los sábados se llenan solos' },
+    ]);
+    expect(calls.filter((c) => c.op === 'setStatus')).toEqual([]);
+
+    const [pending] = (await as('marcos').get('/api/pauta/perritos/decisions?status=pending')).body.decisions;
+    expect(pending).toMatchObject({ tool: 'pause_ad', chat_id: res.body.chat.id, run_id: null });
+    expect((await pauta.repo.listLearnings('perritos'))[0].text).toBe('Los sábados se llenan solos');
+
+    const sent = anthropic.received[0];
+    expect(sent.tools.map((t) => t.name)).not.toContain('ask_team');
+    expect(sent.tools.map((t) => t.name)).not.toContain('record_outcome');
+    expect(sent.system[1].cache_control).toEqual({ type: 'ephemeral' });
+    expect(sent.system[1].text).toContain('## campaigns');
+
+    const list = (await as('marcos').get('/api/pauta/perritos/chats')).body.chats;
+    expect(list).toEqual([expect.objectContaining({ id: res.body.chat.id, message_count: 2 })]);
+  });
+
+  it('sigue la charla con el historial y cada tienda ve solo sus conversaciones', async () => {
+    const { as, anthropic } = await setup({ script: [text('Primera'), text('Segunda')] });
+    const { chat } = (await as('marcos').post('/api/pauta/perritos/chats', { message: 'Hola' })).body;
+    const next = await as('marcos').post(`/api/pauta/perritos/chats/${chat.id}/messages`, { message: '¿Y el gift?' });
+    expect(next.body.messages.map((m) => m.content)).toEqual(['Hola', 'Primera', '¿Y el gift?', 'Segunda']);
+    expect(anthropic.received[1].messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+
+    expect((await as('marcos').get(`/api/pauta/gatitos/chats/${chat.id}`)).status).toBe(404);
+    expect((await as('fran').get('/api/pauta/perritos/chats')).status).toBe(403);
+    expect((await as('marcos').get('/api/pauta/gatitos/chats')).body.chats).toEqual([]);
+    expect((await as('marcos').post('/api/pauta/perritos/chats', { message: '   ' })).status).toBe(400);
+  });
+
+  it('si el agente falla la consulta queda guardada y se puede reintentar', async () => {
+    const { as, anthropic } = await setup({ script: [text('Ahora sí')] });
+    const stream = anthropic.beta.messages.stream;
+    anthropic.beta.messages.stream = () => ({ finalMessage: async () => { throw new Error('overloaded'); } });
+    const res = await as('marcos').post('/api/pauta/perritos/chats', { message: '¿Cómo vamos?' });
+    expect(res.status).toBe(502);
+    const [chat] = (await as('marcos').get('/api/pauta/perritos/chats')).body.chats;
+    expect(chat.message_count).toBe(1);
+
+    anthropic.beta.messages.stream = stream;
+    const retry = await as('marcos').post(`/api/pauta/perritos/chats/${chat.id}/reply`);
+    expect(retry.body.messages.map((m) => m.content)).toEqual(['¿Cómo vamos?', 'Ahora sí']);
+    // Ya contestada: no hay nada que reintentar
+    expect((await as('marcos').post(`/api/pauta/perritos/chats/${chat.id}/reply`)).status).toBe(409);
+  });
+
+  it('la corrida diaria ve lo que el equipo dijo en el chat; borrar la charla no borra lo que propuso', async () => {
+    const { as, anthropic, pauta } = await setup({
+      script: [
+        { stop_reason: 'tool_use', content: [toolUse('t1', 'request_creative', { concept: 'Reel de gatitos', style_notes: '9:16', reason: 'Fatiga' })] },
+        text('Te pedí un reel.'),
+        text('Informe'),
+      ],
+    });
+    const { chat, messages } = (await as('marcos').post('/api/pauta/gatitos/chats', { message: 'Abrimos fechas en diciembre' })).body;
+    expect(messages[1].actions).toEqual([{ type: 'request', title: 'Reel de gatitos' }]);
+
+    await (await pauta.startRun('gatitos', 'manual', 'Marcos')).done;
+    const ctx = anthropic.received.at(-1).messages[0].content;
+    expect(ctx).toContain('## teamChat');
+    expect(ctx).toContain('Abrimos fechas en diciembre');
+
+    expect((await as('marcos').del(`/api/pauta/gatitos/chats/${chat.id}`)).status).toBe(204);
+    expect((await as('marcos').get(`/api/pauta/gatitos/chats/${chat.id}`)).status).toBe(404);
+    expect((await as('marcos').get('/api/pauta/gatitos/overview')).body.requests).toHaveLength(1);
+  });
+});

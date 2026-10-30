@@ -63,7 +63,7 @@ async function authRequest(method, url, token, body) {
     err.unauthorized = true;
     throw err;
   }
-  if (!res.ok) throw new Error(data.error || 'Error al cargar los datos');
+  if (!res.ok) throw Object.assign(new Error(data.error || 'Error al cargar los datos'), { status: res.status });
   return data;
 }
 
@@ -85,6 +85,12 @@ export const pautaApi = (token, store) => ({
   requestDone: (id) => authRequest('POST', pautaUrl(store, `/requests/${id}/done`), token),
   learnings: () => authGet(pautaUrl(store, '/learnings'), token),
   deleteLearning: (id) => authRequest('DELETE', pautaUrl(store, `/learnings/${id}`), token),
+  chats: () => authGet(pautaUrl(store, '/chats'), token),
+  chat: (id) => authGet(pautaUrl(store, `/chats/${id}`), token),
+  startChat: (message) => authRequest('POST', pautaUrl(store, '/chats'), token, { message }),
+  sendChat: (id, message) => authRequest('POST', pautaUrl(store, `/chats/${id}/messages`), token, { message }),
+  retryChat: (id) => authRequest('POST', pautaUrl(store, `/chats/${id}/reply`), token),
+  deleteChat: (id) => authRequest('DELETE', pautaUrl(store, `/chats/${id}`), token),
 });
 
 // Entradas por mail

@@ -5,6 +5,8 @@ import Report from './Report.jsx';
 import SettingsForm from './SettingsForm.jsx';
 import Creatives from './Creatives.jsx';
 import IgPosts from './IgPosts.jsx';
+import Chat from './Chat.jsx';
+import { countAds, filterTree } from './statusView.js';
 
 const POLL_MS = 8000;
 
@@ -191,7 +193,17 @@ export default function PautaView({ token, store, onError }) {
         </section>
       )}
 
-      <section>
+      <Chat
+        key={`chat-${store}`}
+        api={api}
+        store={store}
+        available={configured.agent}
+        onError={fail}
+        onChanged={() => load()}
+        onGoToPending={() => document.getElementById('para-aprobar')?.scrollIntoView({ behavior: 'smooth' })}
+      />
+
+      <section id="para-aprobar">
         <h3 className="section-title">
           Para aprobar {data.pending.length > 0 && <span className="pill">{data.pending.length}</span>}
         </h3>
@@ -426,7 +438,10 @@ function Decision({ d, busy, connected, onApprove, onReject }) {
     <div className="card pad decision">
       <div className="decision-head">
         <span className="tag">{TOOL_LABELS[d.tool] || d.tool}</span>
-        <small className="muted">{when(d.created_at)}</small>
+        <small className="muted">
+          {d.chat_id && 'Desde una consulta · '}
+          {when(d.created_at)}
+        </small>
       </div>
       <strong>{d.title}</strong>
       <DecisionDetail d={d} />
@@ -483,12 +498,33 @@ function Question({ q, busy, onAnswer, onDismiss }) {
   );
 }
 
-function Structure({ snapshot, busy, onStatus }) {
-  const adsByAdset = new Map();
-  for (const a of snapshot.ads) {
-    if (!adsByAdset.has(a.adsetId)) adsByAdset.set(a.adsetId, []);
-    adsByAdset.get(a.adsetId).push(a);
+// Activos por defecto: lo pausado queda a un toque. La vista elegida se recuerda en el navegador
+const VIEW_KEY = 'turnos_pauta_view';
+const VIEWS = ['active', 'paused', 'all'];
+const readView = () => {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    return VIEWS.includes(v) ? v : 'active';
+  } catch {
+    return 'active';
   }
+};
+const EMPTY_VIEW = {
+  active: 'No hay nada activo: todo está pausado.',
+  paused: 'No hay nada pausado.',
+  all: 'La cuenta no tiene campañas todavía.',
+};
+
+function Structure({ snapshot, busy, onStatus }) {
+  const [view, setViewState] = useState(readView);
+  const setView = (v) => {
+    setViewState(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {}
+  };
+  const counts = countAds(snapshot);
+  const campaigns = filterTree(snapshot, view);
   if (!snapshot.campaigns.length) return <p className="muted">La cuenta no tiene campañas todavía.</p>;
   const toggle = (o, level) => (
     <button
@@ -502,7 +538,19 @@ function Structure({ snapshot, busy, onStatus }) {
   return (
     <section>
       <h3 className="section-title">Campañas · últimos 7 días</h3>
-      {snapshot.campaigns.map((c) => (
+      <div className="segmented" role="group" aria-label="Qué campañas mostrar">
+        {[
+          ['active', `Activos (${counts.active})`],
+          ['paused', `Pausados (${counts.paused})`],
+          ['all', 'Todos'],
+        ].map(([key, label]) => (
+          <button key={key} className={view === key ? 'active' : ''} aria-pressed={view === key} onClick={() => setView(key)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {campaigns.length === 0 && <p className="muted">{EMPTY_VIEW[view]}</p>}
+      {campaigns.map((c) => (
         <div key={c.id} className="card pad campaign">
           <div className="campaign-head">
             <div>
@@ -528,9 +576,7 @@ function Structure({ snapshot, busy, onStatus }) {
                 </tr>
               </thead>
               <tbody>
-                {snapshot.adsets
-                  .filter((a) => a.campaignId === c.id)
-                  .flatMap((a) => [
+                {c.adsets.flatMap((a) => [
                     <tr key={a.id} className="adset-row">
                       <td data-label="Conjunto">
                         <strong>{a.name}</strong>
@@ -538,6 +584,7 @@ function Structure({ snapshot, busy, onStatus }) {
                           {META_STATUS[a.effectiveStatus] || a.effectiveStatus}
                           {a.dailyBudgetArs ? ` · ${money(a.dailyBudgetArs)}/día` : ''}
                           {a.learningStage === 'LEARNING' ? ' · Aprendiendo' : ''}
+                          {a.empty ? ' · Sin anuncios' : ''}
                         </div>
                       </td>
                       <td data-label="Gasto" className="num">
@@ -554,7 +601,7 @@ function Structure({ snapshot, busy, onStatus }) {
                       </td>
                       <td>{toggle(a, 'adset')}</td>
                     </tr>,
-                    ...(adsByAdset.get(a.id) ?? []).map((ad) => (
+                    ...a.ads.map((ad) => (
                       <tr key={ad.id} className={ad.status === 'ACTIVE' ? '' : 'inactive-ad'}>
                         <td data-label="Anuncio" className="ad-cell">
                           {ad.thumbnail && <img src={ad.thumbnail} alt="" />}

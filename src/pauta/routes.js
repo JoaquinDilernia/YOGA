@@ -89,7 +89,7 @@ function parseCreative(body = {}, required) {
 }
 
 // canAccess(user, storeKey): el usuario tiene esa tienda asignada
-export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, getRaw, startRun, hasMetaToken, media }) {
+export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, getRaw, startRun, chatReply, hasMetaToken, media }) {
   const r = express.Router({ mergeParams: true });
   const creativeOut = async (store, id) => {
     const c = (await repo.listCreatives(store)).find((x) => x.id === id);
@@ -377,6 +377,66 @@ export function createPautaRouter({ repo, stores, canAccess, metaFor, getShop, g
 
   r.delete('/learnings/:id', wrap(async (req, res) => {
     await repo.deleteLearning(req.store.key, uuid(req.params.id));
+    res.status(204).end();
+  }));
+
+  // ---------- Consultas al agente: contesta y propone, nunca ejecuta en Meta ----------
+  const chatMessage = (body) => {
+    const message = text(body?.message ?? '', 4000, 'Consulta');
+    if (!message) throw badRequest('Escribí la consulta');
+    return message;
+  };
+  const needChat = () => {
+    if (!chatReply) throw unavailable('Falta la clave de Claude (ANTHROPIC_API_KEY) en el servidor.');
+  };
+  // Si el agente falla, la consulta queda guardada y el panel ofrece reintentar
+  async function answer(store, chatId) {
+    try {
+      await chatReply(store, chatId);
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      console.error(`[pauta:${store}] chat:`, err);
+      throw new HttpError(502, `El agente no pudo contestar: ${err.message || err}`);
+    }
+  }
+  const withMessages = async (store, id) => ({ chat: await repo.getChat(store, id), messages: await repo.listChatMessages(id) });
+
+  r.get('/chats', wrap(async (req, res) => res.json({ chats: await repo.listChats(req.store.key) })));
+
+  r.get('/chats/:id', wrap(async (req, res) => res.json(await withMessages(req.store.key, uuid(req.params.id)))));
+
+  r.post('/chats', wrap(async (req, res) => {
+    needChat();
+    const store = req.store.key;
+    const message = chatMessage(req.body);
+    const chat = await repo.createChat(store, message.replace(/\s+/g, ' ').slice(0, 80), req.user.name);
+    await repo.addChatMessage({ chatId: chat.id, role: 'user', content: message, author: req.user.name });
+    await answer(store, chat.id);
+    res.status(201).json(await withMessages(store, chat.id));
+  }));
+
+  r.post('/chats/:id/messages', wrap(async (req, res) => {
+    needChat();
+    const store = req.store.key;
+    const id = uuid(req.params.id);
+    const message = chatMessage(req.body);
+    await repo.getChat(store, id);
+    await repo.addChatMessage({ chatId: id, role: 'user', content: message, author: req.user.name });
+    await answer(store, id);
+    res.json(await withMessages(store, id));
+  }));
+
+  r.post('/chats/:id/reply', wrap(async (req, res) => {
+    needChat();
+    const store = req.store.key;
+    const id = uuid(req.params.id);
+    await repo.getChat(store, id);
+    await answer(store, id);
+    res.json(await withMessages(store, id));
+  }));
+
+  r.delete('/chats/:id', wrap(async (req, res) => {
+    await repo.deleteChat(req.store.key, uuid(req.params.id));
     res.status(204).end();
   }));
 

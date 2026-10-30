@@ -386,6 +386,34 @@ tr.inactive-ad td { color: var(--c-text-3); }
 .run { padding: 6px 0; border-bottom: 1px solid var(--c-border); }
 .run summary { font-size: var(--fs-s); font-weight: 500; }
 
+/* Consultas al agente */
+.chat h3 { margin: 0; }
+.chat .section-head { margin-bottom: var(--sp-2); }
+.composer { display: flex; gap: var(--sp-2); align-items: flex-end; margin-top: var(--sp-3); }
+.composer textarea { flex: 1; min-height: 64px; }
+.chat-row {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; padding: var(--sp-2) 0;
+  border: 0; border-bottom: 1px solid var(--c-border); background: none; color: var(--c-text); cursor: pointer; font: inherit; font-weight: 600;
+}
+.chat-row:last-child { border-bottom: none; }
+.chat-row:hover span { color: var(--c-accent-text); }
+.chat-row small { font-weight: 400; font-size: var(--fs-xs); }
+.thread { display: flex; flex-direction: column; gap: var(--sp-2); max-height: 60vh; overflow-y: auto; }
+.bubble {
+  align-self: flex-start; max-width: min(720px, 92%); padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-l);
+  background: var(--c-surface-2); font-size: var(--fs-m); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.bubble .report { white-space: normal; }
+.bubble.mine { align-self: flex-end; background: var(--c-accent-soft); color: var(--c-accent-text); }
+.bubble > small { display: block; margin-top: 4px; color: var(--c-text-3); font-size: var(--fs-xs); }
+.chat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.chat-actions .tag { height: auto; min-height: 22px; white-space: normal; }
+.thinking { font-size: var(--fs-s); }
+.chat-retry { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+@media (max-width: 640px) {
+  .composer { flex-direction: column; align-items: stretch; }
+}
+
 .settings { display: grid; gap: var(--sp-4); }
 .settings h3, .settings h4 { margin: 0; }
 .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); }

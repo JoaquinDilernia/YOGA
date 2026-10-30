@@ -1,6 +1,7 @@
 import { createPautaRepo } from './repo.js';
 import { createMetaClient } from './meta.js';
 import { createAgentRunner } from './agent.js';
+import { createPautaChat } from './chat.js';
 import { buildShopContext } from './shop.js';
 import { createPautaRouter } from './routes.js';
 import { createMediaService } from './media.js';
@@ -21,6 +22,7 @@ export async function createPauta({ db, stores, canAccess, getStoreData, metaTok
   const getShop = async (key) => buildShopContext(await getStoreData(stores.find((s) => s.key === key)));
   const getRaw = async (key) => (await getStoreData(stores.find((s) => s.key === key))).raw;
   const startRun = anthropic ? createAgentRunner({ anthropic, repo, metaFor, getShop, stores, media, model }) : null;
+  const chatReply = anthropic ? createPautaChat({ anthropic, repo, metaFor, getShop, stores, model }) : null;
 
   // Corrida diaria de todas las tiendas, una detrás de otra (no se pisan con el rate limit de Meta)
   async function runDaily() {
@@ -36,6 +38,6 @@ export async function createPauta({ db, stores, canAccess, getStoreData, metaTok
     }
   }
 
-  const router = createPautaRouter({ repo, stores, canAccess, metaFor, getShop, getRaw, startRun, hasMetaToken: (key) => Boolean(tokenFor(key)), media });
+  const router = createPautaRouter({ repo, stores, canAccess, metaFor, getShop, getRaw, startRun, chatReply, hasMetaToken: (key) => Boolean(tokenFor(key)), media });
   return { repo, router, runDaily, startRun, media };
 }

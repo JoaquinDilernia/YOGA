@@ -41,9 +41,9 @@ export function createPautaRepo(db) {
     listRuns: (store, limit = 10) => all('SELECT * FROM pauta_runs WHERE store_key = $1 ORDER BY started_at DESC LIMIT $2', [store, limit]),
 
     addDecision: (store, d) => one(
-      `INSERT INTO pauta_decisions (store_key, run_id, tool, input, title, reason, expected_impact, status, result, error, decided_by, decided_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CASE WHEN $8 = 'pending' THEN NULL ELSE now() END) RETURNING *`,
-      [store, d.runId ?? null, d.tool, d.input ?? {}, d.title ?? '', d.reason ?? '', d.expectedImpact ?? '', d.status, d.result ?? null, d.error ?? null, d.decidedBy ?? null],
+      `INSERT INTO pauta_decisions (store_key, run_id, chat_id, tool, input, title, reason, expected_impact, status, result, error, decided_by, decided_at)
+       VALUES ($1, $2, $12, $3, $4, $5, $6, $7, $8, $9, $10, $11, CASE WHEN $8 = 'pending' THEN NULL ELSE now() END) RETURNING *`,
+      [store, d.runId ?? null, d.tool, d.input ?? {}, d.title ?? '', d.reason ?? '', d.expectedImpact ?? '', d.status, d.result ?? null, d.error ?? null, d.decidedBy ?? null, d.chatId ?? null],
     ),
     getDecision: (store, id) => one('SELECT * FROM pauta_decisions WHERE store_key = $1 AND id = $2', [store, id], 'No existe esa recomendación.'),
     listDecisions: (store, { status, limit = 50 } = {}) => all(
@@ -134,6 +134,37 @@ export function createPautaRepo(db) {
        WHERE store_key = $1 AND status = 'answered'
          AND answered_at > coalesce((SELECT max(started_at) FROM pauta_runs WHERE store_key = $1 AND status = 'done'), '-infinity'::timestamptz)
        ORDER BY answered_at LIMIT 20`,
+      [store],
+    ),
+
+    // Consultas al agente desde el panel
+    createChat: (store, title, userName) => one(
+      'INSERT INTO pauta_chats (store_key, title, created_by) VALUES ($1, $2, $3) RETURNING *', [store, title, userName ?? null],
+    ),
+    getChat: (store, id) => one('SELECT * FROM pauta_chats WHERE store_key = $1 AND id = $2', [store, id], 'No existe esa conversación.'),
+    listChats: (store, limit = 30) => all(
+      `SELECT c.*, (SELECT count(*)::int FROM pauta_chat_messages m WHERE m.chat_id = c.id) AS message_count
+       FROM pauta_chats c WHERE c.store_key = $1 ORDER BY c.updated_at DESC LIMIT $2`,
+      [store, limit],
+    ),
+    deleteChat: (store, id) => one('DELETE FROM pauta_chats WHERE store_key = $1 AND id = $2 RETURNING id', [store, id], 'No existe esa conversación.'),
+    // actions es jsonb: el array va serializado
+    async addChatMessage({ chatId, role, content, actions = [], author = null }) {
+      const msg = await one(
+        'INSERT INTO pauta_chat_messages (chat_id, role, content, actions, author) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+        [chatId, role, content, JSON.stringify(actions), author],
+      );
+      await db.query('UPDATE pauta_chats SET updated_at = now() WHERE id = $1', [chatId]);
+      return msg;
+    },
+    listChatMessages: (chatId) => all('SELECT * FROM pauta_chat_messages WHERE chat_id = $1 ORDER BY created_at, id', [chatId]),
+    // Lo que el equipo escribió en el chat desde que ARRANCÓ la última corrida terminada (igual que las respuestas)
+    chatSinceLastRun: (store) => all(
+      `SELECT m.content, m.created_at, m.author, c.title AS chat
+       FROM pauta_chat_messages m JOIN pauta_chats c ON c.id = m.chat_id
+       WHERE c.store_key = $1 AND m.role = 'user'
+         AND m.created_at > coalesce((SELECT max(started_at) FROM pauta_runs WHERE store_key = $1 AND status = 'done'), '-infinity'::timestamptz)
+       ORDER BY m.created_at LIMIT 40`,
       [store],
     ),
 

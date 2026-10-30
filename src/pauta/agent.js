@@ -163,10 +163,10 @@ export function createExecutor({ meta, repo, store, settings, media }) {
   };
 }
 
-// Atiende cada tool_use del modelo durante una corrida
+// Atiende cada tool_use del modelo durante una corrida (runId) o una consulta del chat (chatId)
 export function createDispatcher({ meta, repo, store, execute }) {
-  return async function dispatch(name, input, { runId, settings }) {
-    const base = { runId, tool: name, input, title: input.title ?? '', reason: input.reason ?? '', expectedImpact: input.expected_impact ?? '' };
+  return async function dispatch(name, input, { runId = null, chatId = null, settings }) {
+    const base = { runId, chatId, tool: name, input, title: input.title ?? '', reason: input.reason ?? '', expectedImpact: input.expected_impact ?? '' };
     try {
       if (!meta && (name === 'search_interest' || META_ACTIONS.has(name))) return { error: 'Meta todavía no está conectado: esta herramienta no está disponible.' };
       if (name === 'search_interest') return { results: await meta.searchInterests(input.query) };
@@ -228,7 +228,7 @@ async function unusedCreativesForContext({ repo, store }) {
 }
 
 export async function buildContext({ meta, repo, store, settings, shop }) {
-  const [snapshot, requests, learnings, pending, recent, toEvaluate, openQuestions, answered, igPosts, unusedCreatives] = await Promise.all([
+  const [snapshot, requests, learnings, pending, recent, toEvaluate, openQuestions, answered, igPosts, unusedCreatives, teamChat] = await Promise.all([
     meta ? buildSnapshot(meta) : null,
     repo.listRequests(store, { status: 'open' }),
     repo.listLearnings(store, { activeOnly: true }),
@@ -239,6 +239,7 @@ export async function buildContext({ meta, repo, store, settings, shop }) {
     repo.answeredSinceLastRun(store),
     meta ? igPostsForContext({ meta, repo, store, settings }) : [],
     unusedCreativesForContext({ repo, store }),
+    repo.chatSinceLastRun(store),
   ]);
   const settingsSection = {
     monthly_cap_ars: settings.monthly_cap_ars, target_cpa_ars: settings.target_cpa_ars,
@@ -267,6 +268,7 @@ export async function buildContext({ meta, repo, store, settings, shop }) {
     decisionsToEvaluate: toEvaluate,
     openQuestions: openQuestions.map((q) => ({ id: q.id, question: q.question, created_at: q.created_at })),
     answeredQuestions: answered.map((q) => ({ question: q.question, answer: q.answer, answered_by: q.answered_by, answered_at: q.answered_at })),
+    teamChat: teamChat.map((m) => ({ said: m.content.slice(0, 600), by: m.author, at: m.created_at, chat: m.chat })),
   };
   return Object.entries(sections).map(([k, v]) => `## ${k}\n${JSON.stringify(v)}`).join('\n\n');
 }
