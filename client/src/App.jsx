@@ -14,7 +14,7 @@ const NAV = [
   { to: '/lista', label: 'Lista', icon: List },
   { to: '/calendario', label: 'Calendario', icon: CalendarDays },
   { to: '/envios', label: 'Envíos', icon: Mail, entradas: true },
-  { to: '/pauta', label: 'Pauta', icon: Megaphone, pauta: true },
+  { to: '/pauta', label: 'Pauta', icon: Megaphone, pauta: true, agente: true },
   { to: '/reportes', label: 'Reportes', icon: BarChart3, pauta: true },
 ];
 
@@ -29,6 +29,7 @@ export default function App() {
   // null hasta saber si el servidor tiene la pauta prendida
   const [pautaEnabled, setPautaEnabled] = useState(null);
   const [entradasEnabled, setEntradasEnabled] = useState(null);
+  const [agenteEnabled, setAgenteEnabled] = useState(null);
   const path = useLocation().pathname;
   const onReports = path.startsWith('/reportes');
   const onEnvios = path.startsWith('/envios');
@@ -55,9 +56,10 @@ export default function App() {
   useEffect(() => {
     if (!session) return;
     fetchMe(session.token)
-      .then(({ stores, pauta, entradas }) => {
+      .then(({ stores, pauta, agente, entradas }) => {
         setStores(stores);
         setPautaEnabled(Boolean(pauta));
+        setAgenteEnabled(Boolean(agente));
         setEntradasEnabled(Boolean(entradas));
         const last = getLastStore();
         setStoreKey(stores.some((s) => s.key === last) ? last : stores[0]?.key || null);
@@ -113,7 +115,7 @@ export default function App() {
   }
 
   const currentStore = stores.find((s) => s.key === storeKey);
-  const nav = NAV.filter((n) => (!n.pauta || pautaEnabled) && (!n.entradas || entradasEnabled));
+  const nav = NAV.filter((n) => (!n.pauta || pautaEnabled) && (!n.agente || agenteEnabled) && (!n.entradas || entradasEnabled));
   const section = NAV.find((n) => path.startsWith(n.to))?.label ?? 'Turnos';
   const userName = session.user?.name || '';
 
@@ -212,6 +214,7 @@ export default function App() {
 
           {path === '/' && <Navigate to="/lista" replace />}
           {onPauta && !onEnvios && pautaEnabled === false && <Navigate to="/lista" replace />}
+          {onPauta && !onReports && !onEnvios && agenteEnabled === false && <Navigate to={pautaEnabled ? '/reportes' : '/lista'} replace />}
           {onEnvios && entradasEnabled === false && <Navigate to="/lista" replace />}
           {onEnvios && entradasEnabled && storeKey && <EnviosView token={session.token} store={storeKey} onError={handleError} />}
           {onReports && pautaEnabled && storeKey && (
@@ -223,7 +226,7 @@ export default function App() {
               onError={handleError}
             />
           )}
-          {onPauta && !onReports && !onEnvios && pautaEnabled && storeKey && (
+          {onPauta && !onReports && !onEnvios && pautaEnabled && agenteEnabled && storeKey && (
             <PautaView token={session.token} store={storeKey} onError={handleError} />
           )}
 

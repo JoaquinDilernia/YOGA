@@ -19,7 +19,8 @@ const SECRET = process.env.SESSION_SECRET || 'cambiar-esto';
 const SESSION_DAYS = 30;
 
 // Tiendas: STORES='[{"key":"perritos","name":"Yoga y Patitas","id":"123","token":"..."}]'
-// Usuarios: USERS='[{"name":"Marcos","password":"...","stores":["perritos","gatitos"]}]' · "stores":["*"] = todas
+// Usuarios: USERS='[{"name":"Marcos","password":"...","stores":["perritos","gatitos"],"agente":false}]' · "stores":["*"] = todas
+// "agente": false → sin la sección Pauta (agente, campañas, piezas); Reportes sí
 const parseEnv = (name) => {
   try {
     return JSON.parse(process.env[name] || '[]');
@@ -33,6 +34,12 @@ const USERS = parseEnv('USERS').filter((u) => u.name && u.password && Array.isAr
 if (!STORES.length || !USERS.length) console.warn('[turnos] Faltan STORES o USERS');
 
 const hasStore = (user, key) => user.stores.includes('*') || user.stores.includes(key);
+const canUseAgent = (user) => user.agente !== false;
+// Sin agente solo puede leer el reporte (sección Reportes)
+const agentGate = (req, res, next) =>
+  canUseAgent(req.user) || (req.method === 'GET' && req.path === '/report')
+    ? next()
+    : res.status(403).json({ error: 'Tu usuario no tiene acceso al agente de pauta' });
 const userStores = (user) => STORES.filter((s) => hasStore(user, s.key)).map((s) => ({ key: s.key, name: s.name }));
 
 // ---------- Sesión (token firmado, sin base de datos) ----------
@@ -176,7 +183,7 @@ app.post('/api/login', (req, res) => {
 });
 
 app.get('/api/me', auth, (req, res) => {
-  res.json({ user: { name: req.user.name }, stores: userStores(req.user), pauta: Boolean(pauta), entradas: Boolean(entradas) });
+  res.json({ user: { name: req.user.name }, stores: userStores(req.user), pauta: Boolean(pauta), agente: Boolean(pauta) && canUseAgent(req.user), entradas: Boolean(entradas) });
 });
 
 app.get('/api/turnos', auth, async (req, res) => {
@@ -209,7 +216,7 @@ if (storage?.driver === 'local') {
   });
 }
 
-if (pauta) app.use('/api/pauta/:store', auth, pauta.router, pautaErrorHandler);
+if (pauta) app.use('/api/pauta/:store', auth, agentGate, pauta.router, pautaErrorHandler);
 if (entradas) {
   const withStore = (req, res, next) => {
     const store = hasStore(req.user, req.params.store) && STORES.find((s) => s.key === req.params.store);

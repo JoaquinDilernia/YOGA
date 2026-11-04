@@ -14,6 +14,11 @@ describe('readSsoToken', () => {
     expect(readSsoToken(TOKEN, 'secreto', 1_000_000, users).stores).toEqual(['gatitos']);
   });
 
+  it('respeta el agente: false del usuario', () => {
+    const users = [{ name: 'Marcos', password: 'x', stores: ['*'], agente: false }];
+    expect(readSsoToken(TOKEN, 'secreto', 1_000_000, users).agente).toBe(false);
+  });
+
   it('rechaza vencido, firma de otro secreto, sin secreto configurado o token común', () => {
     expect(readSsoToken(TOKEN, 'secreto', 44_200_001)).toBeNull();
     expect(readSsoToken(TOKEN, 'otro', 1_000_000)).toBeNull();

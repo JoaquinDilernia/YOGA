@@ -16,5 +16,5 @@ export function readSsoToken(token, secret, now = Date.now(), users = []) {
   if (!(Number(exp) > now)) return null;
   const name = Buffer.from(encoded, 'base64url').toString();
   const known = users.find((u) => u.name.trim().toLowerCase() === name.trim().toLowerCase());
-  return { name, stores: known ? known.stores : ['*'], sso: true };
+  return known ? { name, stores: known.stores, agente: known.agente, sso: true } : { name, stores: ['*'], sso: true };
 }
